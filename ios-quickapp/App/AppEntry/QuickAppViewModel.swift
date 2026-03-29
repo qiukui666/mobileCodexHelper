@@ -40,6 +40,7 @@ final class QuickAppViewModel: ObservableObject {
     private let webWorkbench: WebWorkbenchManaging
     private let tailscaleLauncher: TailscaleLaunching
     private var pendingSendMessageID: UUID?
+    private var pendingTimeoutWorkItem: DispatchWorkItem?
 
     init(
         config: QuickAppConfig,
@@ -143,6 +144,14 @@ final class QuickAppViewModel: ObservableObject {
         let pendingID = UUID()
         pendingSendMessageID = pendingID
         messages.append(ChatMessage(id: pendingID, role: .system, text: "正在发送..."))
+        pendingTimeoutWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard self.pendingSendMessageID == pendingID else { return }
+            self.finishPendingSend(with: "已发送，但暂未抓到远端回复（可能是页面回包结构未命中）。")
+        }
+        pendingTimeoutWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: workItem)
 
         webWorkbench.sendRawCommand(trimmed) { [weak self] result in
             guard let self else { return }
@@ -167,6 +176,8 @@ final class QuickAppViewModel: ObservableObject {
     }
 
     private func finishPendingSend(with text: String) {
+        pendingTimeoutWorkItem?.cancel()
+        pendingTimeoutWorkItem = nil
         guard let id = pendingSendMessageID,
               let idx = messages.firstIndex(where: { $0.id == id }) else {
             messages.append(ChatMessage(role: .system, text: text))

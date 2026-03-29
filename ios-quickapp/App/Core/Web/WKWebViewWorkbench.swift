@@ -123,8 +123,21 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 resolve(.failure(error))
                 return
             }
-            if let dict = raw as? [String: Any], let sent = dict["sent"] as? Bool, sent == false {
-                let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
+            if let dict = raw as? [String: Any] {
+                let sent = (dict["sent"] as? Bool) ?? false
+                let clicked = (dict["clicked"] as? Bool) ?? false
+                let submitted = (dict["submitted"] as? Bool) ?? false
+                if !sent || (!clicked && !submitted) {
+                    let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
+                    resolve(.failure(NSError(
+                        domain: "MobileCodexQuick",
+                        code: 1002,
+                        userInfo: [NSLocalizedDescriptionKey: "发送失败：\(reason)"]
+                    )))
+                    return
+                }
+            } else {
+                let reason = "页面脚本返回异常"
                 resolve(.failure(NSError(
                     domain: "MobileCodexQuick",
                     code: 1002,
@@ -165,6 +178,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
             var sent = false;
             var clicked = false;
+            var submitted = false;
 
             if (input) {
                 if ('value' in input) {
@@ -175,8 +189,18 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 if (input.focus) { input.focus(); }
                 input.dispatchEvent(new Event('input', { bubbles: true }));
                 input.dispatchEvent(new Event('change', { bubbles: true }));
-                input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+                input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true }));
+                input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
                 sent = true;
+                const form = input.closest ? input.closest('form') : null;
+                if (form && typeof form.requestSubmit === 'function') {
+                    form.requestSubmit();
+                    submitted = true;
+                } else if (form && typeof form.submit === 'function') {
+                    form.submit();
+                    submitted = true;
+                }
             }
 
             const sendSelectors = [
@@ -198,7 +222,8 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             return {
               sent: sent,
               reason: sent ? "ok" : "未找到输入控件",
-              clicked: clicked
+              clicked: clicked,
+              submitted: submitted
             };
         })();
         """
