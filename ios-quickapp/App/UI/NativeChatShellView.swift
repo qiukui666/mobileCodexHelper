@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NativeChatShellView: View {
     @ObservedObject var viewModel: QuickAppViewModel
+    @State private var showWebLoginSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,6 +17,21 @@ struct NativeChatShellView: View {
                 .opacity(0.01)
         }
         .background(Color(uiColor: .systemBackground))
+        .sheet(isPresented: $showWebLoginSheet) {
+            NavigationStack {
+                WebWorkbenchContainerView(webView: viewModel.webView)
+                    .navigationTitle("网页登录")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("关闭") { showWebLoginSheet = false }
+                        }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("刷新") { viewModel.reloadWorkbench() }
+                        }
+                    }
+            }
+        }
     }
 
     private var header: some View {
@@ -32,6 +48,7 @@ struct NativeChatShellView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             HStack(spacing: 10) {
                 Button("连接") { viewModel.openWorkbench() }
+                Button("网页登录") { showWebLoginSheet = true }
                 Button("发送预设") {
                     if let first = viewModel.commandPresets.first {
                         viewModel.sendPreset(first)
