@@ -132,6 +132,7 @@ final class QuickAppViewModel: ObservableObject {
             return
         }
         messages.append(ChatMessage(role: .user, text: trimmed))
+        messages.append(ChatMessage(role: .system, text: "正在发送..."))
 
         webWorkbench.sendRawCommand(trimmed) { [weak self] result in
             guard let self else { return }

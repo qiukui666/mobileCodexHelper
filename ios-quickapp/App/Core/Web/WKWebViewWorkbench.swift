@@ -18,6 +18,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
     private let config: QuickAppConfig
     private var assistantMessageHandler: ((String) -> Void)?
     private let bridgeHandlerName = "mobilecodexBridge"
+    private let jsTimeoutSeconds: TimeInterval = 8
 
     init(config: QuickAppConfig) {
         self.config = config
@@ -98,12 +99,31 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
     func sendRawCommand(_ command: String, completion: ((Result<Void, Error>) -> Void)?) {
         let script = Self.makeDispatchScript(command: command)
+        var finished = false
+        let lock = NSLock()
+
+        func resolve(_ result: Result<Void, Error>) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !finished else { return }
+            finished = true
+            completion?(result)
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + jsTimeoutSeconds) {
+            resolve(.failure(NSError(
+                domain: "MobileCodexQuick",
+                code: 1001,
+                userInfo: [NSLocalizedDescriptionKey: "发送超时：页面未就绪或脚本未响应"]
+            )))
+        }
+
         webView.evaluateJavaScript(script) { _, error in
             if let error {
-                completion?(.failure(error))
+                resolve(.failure(error))
                 return
             }
-            completion?(.success(()))
+            resolve(.success(()))
         }
     }
 
@@ -140,8 +160,10 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 } else {
                     input.textContent = command;
                 }
+                if (input.focus) { input.focus(); }
                 input.dispatchEvent(new Event('input', { bubbles: true }));
                 input.dispatchEvent(new Event('change', { bubbles: true }));
+                input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
             }
 
             const sendSelectors = [
