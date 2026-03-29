@@ -42,9 +42,9 @@ final class QuickAppViewModel: ObservableObject {
     func openTailscale() {
         let opened = tailscaleLauncher.launch()
         if opened {
-            lastActionMessage = "已尝试拉起 Tailscale"
+            lastActionMessage = "已尝试拉起 Tailscale；若出现 deeplink 报错，请改为手动打开 Tailscale App。"
         } else {
-            lastActionMessage = "无法拉起 Tailscale，请检查是否安装"
+            lastActionMessage = "无法拉起 Tailscale，请检查是否安装；也可手动打开 Tailscale App。"
         }
         refreshTailscaleStatus()
     }

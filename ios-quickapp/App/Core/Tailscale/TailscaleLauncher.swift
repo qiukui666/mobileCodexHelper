@@ -15,7 +15,9 @@ protocol TailscaleLaunching {
 @MainActor
 final class TailscaleLauncher: TailscaleLaunching {
     private let application: UIApplication
-    private let supportedSchemes = ["tailscale://", "ts-vpn://"]
+    // `tailscale://` 在部分版本上会进入 deeplink 校验路径并报 Unable to verify deeplink。
+    // 优先使用 `ts-vpn://` 只做应用拉起。
+    private let supportedSchemes = ["ts-vpn://", "tailscale://"]
 
     init(application: UIApplication = .shared) {
         self.application = application
