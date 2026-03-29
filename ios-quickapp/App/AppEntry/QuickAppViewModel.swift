@@ -44,6 +44,12 @@ final class QuickAppViewModel: ObservableObject {
         self.commandPresets = config.commandPresets
         self.webWorkbench = webWorkbench
         self.tailscaleLauncher = tailscaleLauncher
+        self.webWorkbench.setAssistantMessageHandler { [weak self] text in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.messages.append(ChatMessage(role: .assistant, text: text))
+            }
+        }
     }
 
     func start() {
@@ -112,7 +118,6 @@ final class QuickAppViewModel: ObservableObject {
                 case .success:
                     self.lastActionMessage = "已发送预设：\(preset.title)"
                     self.messages.append(ChatMessage(role: .user, text: preset.command))
-                    self.messages.append(ChatMessage(role: .assistant, text: "指令已发送到远端工作台。"))
                 case let .failure(error):
                     self.lastActionMessage = "发送失败：\(error.localizedDescription)"
                 }
@@ -134,7 +139,6 @@ final class QuickAppViewModel: ObservableObject {
                 switch result {
                 case .success:
                     self.lastActionMessage = "已发送自定义指令"
-                    self.messages.append(ChatMessage(role: .assistant, text: "已发送，等待远端执行结果。"))
                 case let .failure(error):
                     self.lastActionMessage = "发送失败：\(error.localizedDescription)"
                     self.messages.append(ChatMessage(role: .system, text: "发送失败：\(error.localizedDescription)"))

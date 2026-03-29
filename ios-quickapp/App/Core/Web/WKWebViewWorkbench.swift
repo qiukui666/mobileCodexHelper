@@ -3,6 +3,7 @@ import WebKit
 
 protocol WebWorkbenchManaging: AnyObject {
     var webView: WKWebView { get }
+    func setAssistantMessageHandler(_ handler: @escaping (String) -> Void)
     func loadConfiguredURL()
     func load(url: URL)
     func reload()
@@ -11,18 +12,35 @@ protocol WebWorkbenchManaging: AnyObject {
     func sendRawCommand(_ command: String, completion: ((Result<Void, Error>) -> Void)?)
 }
 
-final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging {
+final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageHandler, WKNavigationDelegate {
     let webView: WKWebView
 
     private let config: QuickAppConfig
+    private var assistantMessageHandler: ((String) -> Void)?
+    private let bridgeHandlerName = "mobilecodexBridge"
 
     init(config: QuickAppConfig) {
         self.config = config
         let webConfig = WKWebViewConfiguration()
         webConfig.defaultWebpagePreferences.allowsContentJavaScript = true
+        webConfig.userContentController.addUserScript(WKUserScript(
+            source: Self.makeObserverBootstrapScript(handlerName: "mobilecodexBridge"),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false
+        ))
         self.webView = WKWebView(frame: .zero, configuration: webConfig)
         super.init()
         self.webView.allowsBackForwardNavigationGestures = true
+        self.webView.navigationDelegate = self
+        self.webView.configuration.userContentController.add(self, name: bridgeHandlerName)
+    }
+
+    deinit {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: bridgeHandlerName)
+    }
+
+    func setAssistantMessageHandler(_ handler: @escaping (String) -> Void) {
+        assistantMessageHandler = handler
     }
 
     func loadConfiguredURL() {
@@ -55,6 +73,22 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging {
                 return
             }
             completion?(.success(()))
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        webView.evaluateJavaScript(Self.makeObserverInstallScript(handlerName: bridgeHandlerName), completionHandler: nil)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == bridgeHandlerName else { return }
+        if let body = message.body as? [String: Any],
+           let type = body["type"] as? String,
+           type == "assistant_message",
+           let text = body["text"] as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            assistantMessageHandler?(trimmed)
         }
     }
 
@@ -125,6 +159,77 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging {
             }
 
             return true;
+        })();
+        """
+    }
+
+    private static func makeObserverBootstrapScript(handlerName: String) -> String {
+        """
+        (function() {
+          if (window.__mobilecodexBootstrapInstalled) return;
+          window.__mobilecodexBootstrapInstalled = true;
+
+          window.__mobilecodexPostNative = function(payload) {
+            try {
+              if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.\(handlerName)) {
+                window.webkit.messageHandlers.\(handlerName).postMessage(payload);
+              }
+            } catch (_) {}
+          };
+        })();
+        """
+    }
+
+    private static func makeObserverInstallScript(handlerName: String) -> String {
+        """
+        (function() {
+          if (window.__mobilecodexObserverInstalled) return true;
+          window.__mobilecodexObserverInstalled = true;
+
+          const seen = new Set();
+
+          function post(text) {
+            try {
+              if (!text) return;
+              const t = String(text).trim();
+              if (!t || seen.has(t)) return;
+              seen.add(t);
+              if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.\(handlerName)) {
+                window.webkit.messageHandlers.\(handlerName).postMessage({ type: 'assistant_message', text: t });
+              }
+            } catch (_) {}
+          }
+
+          function extractAssistantTexts() {
+            const selectors = [
+              '[data-role="assistant-message"]',
+              '.assistant-message',
+              '[data-message-author="assistant"]',
+              '[data-testid*="assistant"]',
+              '.message.assistant',
+              '[role="article"]'
+            ];
+            const nodes = [];
+            for (const sel of selectors) {
+              document.querySelectorAll(sel).forEach(el => nodes.push(el));
+            }
+            return nodes
+              .map(el => (el && el.innerText) ? el.innerText.trim() : '')
+              .filter(Boolean);
+          }
+
+          function scan() {
+            const texts = extractAssistantTexts();
+            if (texts.length > 0) {
+              post(texts[texts.length - 1]);
+            }
+          }
+
+          const observer = new MutationObserver(() => scan());
+          observer.observe(document.documentElement || document.body, { childList: true, subtree: true, characterData: true });
+          setInterval(scan, 1200);
+          scan();
+          return true;
         })();
         """
     }
