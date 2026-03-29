@@ -245,6 +245,12 @@ final class QuickAppViewModel: ObservableObject {
         if normalized == "已发送，等待远端回复..." || normalized == "正在发送..." {
             return false
         }
+        if normalized.contains("Enter to send") || normalized.contains("Shift+Enter") || normalized.contains("slash commands") {
+            return false
+        }
+        if normalized.contains("sessions") && normalized.contains("workspace") {
+            return false
+        }
         if messages.contains(where: { $0.role == .user && $0.text == normalized }) {
             return false
         }

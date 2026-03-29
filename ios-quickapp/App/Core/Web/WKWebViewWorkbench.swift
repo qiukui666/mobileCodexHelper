@@ -182,11 +182,12 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 }));
             } catch (_) {}
 
+            // Target claudecodeui composer specifically to avoid hitting unrelated inputs.
             const inputSelectors = [
-                'textarea[data-role="prompt"]',
-                'textarea',
-                'input[type="text"]',
-                '[contenteditable="true"]'
+                'textarea.chat-input-placeholder',
+                'form textarea.chat-input-placeholder',
+                'textarea[placeholder*="Enter"]',
+                'textarea[placeholder*="输入"]'
             ];
             var input = null;
             for (const selector of inputSelectors) {
@@ -224,15 +225,11 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 }
             }
 
-            const sendSelectors = [
-                'button[type="submit"]',
-                'button[data-role="send"]',
-                '[aria-label="Send"]',
-                '[data-testid="send-button"]'
-            ];
+            const targetForm = input && input.closest ? input.closest('form') : null;
+            const sendSelectors = ['button[type="submit"]'];
             for (const selector of sendSelectors) {
-                const button = document.querySelector(selector);
-                if (button) {
+                const button = targetForm ? targetForm.querySelector(selector) : document.querySelector(selector);
+                if (button && !button.disabled) {
                     button.click();
                     clicked = true;
                     sent = true;
@@ -288,21 +285,11 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
           }
 
           function extractAssistantTexts() {
-            const selectors = [
-              '[data-role="assistant-message"]',
-              '.assistant-message',
-              '[data-message-author="assistant"]',
-              '[data-testid*="assistant"]',
-              '.message.assistant',
-              '[role="article"]'
-            ];
-            const nodes = [];
-            for (const sel of selectors) {
-              document.querySelectorAll(sel).forEach(el => nodes.push(el));
-            }
-            return nodes
-              .map(el => (el && el.innerText) ? el.innerText.trim() : '')
-              .filter(Boolean);
+            const nodes = Array.from(document.querySelectorAll('.chat-message.assistant'));
+            return nodes.map((el) => {
+              const body = el.querySelector('.prose, .markdown, .whitespace-pre-wrap') || el;
+              return body && body.innerText ? body.innerText.trim() : '';
+            }).filter(Boolean);
           }
 
           function scan() {
@@ -330,30 +317,15 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             return t;
           }
 
-          const strictSelectors = [
-            '[data-role="assistant-message"]',
-            '.assistant-message',
-            '[data-message-author="assistant"]',
-            '[data-testid*="assistant"]',
-            '.message.assistant'
-          ];
+          const strictSelectors = ['.chat-message.assistant'];
           const strictNodes = [];
           for (const sel of strictSelectors) {
             document.querySelectorAll(sel).forEach(n => strictNodes.push(n));
           }
           for (let i = strictNodes.length - 1; i >= 0; i--) {
-            const t = textOf(strictNodes[i]);
+            const body = strictNodes[i].querySelector('.prose, .markdown, .whitespace-pre-wrap') || strictNodes[i];
+            const t = textOf(body);
             if (t) return t;
-          }
-
-          // Fallback: scan elements whose class/id hints assistant/ai/bot.
-          const all = Array.from(document.querySelectorAll('div,article,section,p,span'));
-          for (let i = all.length - 1; i >= 0; i--) {
-            const n = all[i];
-            const key = ((n.className || '') + ' ' + (n.id || '')).toLowerCase();
-            if (!/(assistant|ai|bot|reply|response)/.test(key)) continue;
-            const t = textOf(n);
-            if (t && t.length > 1 && t.length < 8000) return t;
           }
 
           return '';
