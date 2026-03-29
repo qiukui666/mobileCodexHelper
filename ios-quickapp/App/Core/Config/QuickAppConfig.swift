@@ -11,7 +11,7 @@ struct QuickAppConfig: Hashable, Codable {
     let commandPresets: [CommandPreset]
 
     static let `default` = QuickAppConfig(
-        defaultWorkbenchURL: URL(string: "https://example.com/workbench")!,
+        defaultWorkbenchURL: URL(string: "https://desktop-lk0um3a-1.taild2d00d.ts.net/session/019d34bb-26ea-79f2-af3c-a012edb6e5c2")!,
         commandPresets: [
             CommandPreset(
                 id: "summarize",

@@ -2,11 +2,27 @@ import Combine
 import Foundation
 import WebKit
 
+struct ChatMessage: Identifiable, Equatable {
+    enum Role {
+        case user
+        case assistant
+        case system
+    }
+
+    let id = UUID()
+    let role: Role
+    let text: String
+}
+
 @MainActor
 final class QuickAppViewModel: ObservableObject {
     @Published private(set) var tailscaleStatus: TailscaleStatus = .unavailable
     @Published private(set) var lastActionMessage: String = ""
     @Published var urlText: String
+    @Published var inputText: String = ""
+    @Published private(set) var messages: [ChatMessage] = [
+        ChatMessage(role: .system, text: "已就绪，你可以直接发送指令。")
+    ]
 
     let defaultURLString: String
     let commandPresets: [CommandPreset]
@@ -61,6 +77,7 @@ final class QuickAppViewModel: ObservableObject {
         }
         webWorkbench.load(url: url)
         lastActionMessage = "正在打开工作台"
+        messages.append(ChatMessage(role: .system, text: "已加载工作台地址。"))
     }
 
     func clearSession() {
@@ -71,6 +88,7 @@ final class QuickAppViewModel: ObservableObject {
                 case .success:
                     self.webWorkbench.reload()
                     self.lastActionMessage = "会话缓存已清理"
+                    self.messages.append(ChatMessage(role: .system, text: "会话已清空。"))
                 case let .failure(error):
                     self.lastActionMessage = "清理失败：\(error.localizedDescription)"
                 }
@@ -93,6 +111,8 @@ final class QuickAppViewModel: ObservableObject {
                 switch result {
                 case .success:
                     self.lastActionMessage = "已发送预设：\(preset.title)"
+                    self.messages.append(ChatMessage(role: .user, text: preset.command))
+                    self.messages.append(ChatMessage(role: .assistant, text: "指令已发送到远端工作台。"))
                 case let .failure(error):
                     self.lastActionMessage = "发送失败：\(error.localizedDescription)"
                 }
@@ -106,6 +126,7 @@ final class QuickAppViewModel: ObservableObject {
             lastActionMessage = "指令不能为空"
             return
         }
+        messages.append(ChatMessage(role: .user, text: trimmed))
 
         webWorkbench.sendRawCommand(trimmed) { [weak self] result in
             guard let self else { return }
@@ -113,10 +134,19 @@ final class QuickAppViewModel: ObservableObject {
                 switch result {
                 case .success:
                     self.lastActionMessage = "已发送自定义指令"
+                    self.messages.append(ChatMessage(role: .assistant, text: "已发送，等待远端执行结果。"))
                 case let .failure(error):
                     self.lastActionMessage = "发送失败：\(error.localizedDescription)"
+                    self.messages.append(ChatMessage(role: .system, text: "发送失败：\(error.localizedDescription)"))
                 }
             }
         }
+    }
+
+    func sendInputMessage() {
+        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        inputText = ""
+        sendCommand(text)
     }
 }

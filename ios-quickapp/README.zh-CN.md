@@ -1,9 +1,9 @@
 # MobileCodex 快版 iOS 客户端（中文界面）
 
 这是一个“先可用”的 iOS 快版：
-- App 内打开远程工作台页面
-- App 内发送预设指令
-- 提供 Tailscale 一键拉起入口（不内置VPN内核）
+- 原生聊天样式界面（消息气泡 + 输入框）
+- 后台承载远程工作台连接（不直接展示网页）
+- 手动打开 Tailscale 后即可在 App 内发指令
 
 ## 目录
 - `App/UI`：界面层（机器人1）
@@ -22,5 +22,5 @@
 3. 把 `MobileCodexQuick.ipa` 传到手机用 TrollStore 安装
 
 ## 说明
-- 该快版通过 URL Scheme 调起 Tailscale App。
-- 首次网络与权限行为依系统策略，无法绕过 iOS 系统弹窗。
+- 当前版本不再提供“打开 Tailscale”按钮，建议先手动连接 Tailscale。
+- 若要真正做到“全原生聊天并显示助手回复”，下一步需要对接稳定的后端聊天 API（而非网页注入）。

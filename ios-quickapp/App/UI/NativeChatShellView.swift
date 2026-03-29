@@ -1,0 +1,118 @@
+import SwiftUI
+
+struct NativeChatShellView: View {
+    @ObservedObject var viewModel: QuickAppViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            messages
+            composer
+
+            // 后台承载工作台，不直接展示网页界面
+            WebWorkbenchContainerView(webView: viewModel.webView)
+                .frame(height: 1)
+                .opacity(0.01)
+        }
+        .background(Color(uiColor: .systemBackground))
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("移动 Codex")
+                .font(.headline)
+            TextField("服务地址", text: $viewModel.urlText)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+                .keyboardType(.URL)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color(uiColor: .tertiarySystemFill))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            HStack(spacing: 10) {
+                Button("连接") { viewModel.openWorkbench() }
+                Button("发送预设") {
+                    if let first = viewModel.commandPresets.first {
+                        viewModel.sendPreset(first)
+                    }
+                }
+                Button("清空") { viewModel.clearSession() }
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(12)
+    }
+
+    private var messages: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(viewModel.messages) { message in
+                        bubble(message)
+                            .id(message.id)
+                    }
+                }
+                .padding(12)
+            }
+            .onChange(of: viewModel.messages.count) { _ in
+                if let last = viewModel.messages.last {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    private var composer: some View {
+        HStack(spacing: 8) {
+            TextField("输入指令...", text: $viewModel.inputText)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color(uiColor: .tertiarySystemFill))
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+
+            Button("发送") {
+                viewModel.sendInputMessage()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(12)
+    }
+
+    @ViewBuilder
+    private func bubble(_ message: ChatMessage) -> some View {
+        switch message.role {
+        case .user:
+            HStack {
+                Spacer()
+                Text(message.text)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .foregroundStyle(.white)
+                    .background(Color.blue)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        case .assistant:
+            HStack {
+                Text(message.text)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Spacer()
+            }
+        case .system:
+            HStack {
+                Spacer()
+                Text(message.text)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+        }
+    }
+}
