@@ -118,9 +118,18 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             )))
         }
 
-        webView.evaluateJavaScript(script) { _, error in
+        webView.evaluateJavaScript(script) { raw, error in
             if let error {
                 resolve(.failure(error))
+                return
+            }
+            if let dict = raw as? [String: Any], let sent = dict["sent"] as? Bool, sent == false {
+                let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
+                resolve(.failure(NSError(
+                    domain: "MobileCodexQuick",
+                    code: 1002,
+                    userInfo: [NSLocalizedDescriptionKey: "发送失败：\(reason)"]
+                )))
                 return
             }
             resolve(.success(()))
@@ -154,6 +163,9 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 }
             }
 
+            var sent = false;
+            var clicked = false;
+
             if (input) {
                 if ('value' in input) {
                     input.value = command;
@@ -164,6 +176,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 input.dispatchEvent(new Event('input', { bubbles: true }));
                 input.dispatchEvent(new Event('change', { bubbles: true }));
                 input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                sent = true;
             }
 
             const sendSelectors = [
@@ -176,11 +189,17 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 const button = document.querySelector(selector);
                 if (button) {
                     button.click();
+                    clicked = true;
+                    sent = true;
                     break;
                 }
             }
 
-            return true;
+            return {
+              sent: sent,
+              reason: sent ? "ok" : "未找到输入控件",
+              clicked: clicked
+            };
         })();
         """
     }

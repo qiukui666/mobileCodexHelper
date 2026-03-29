@@ -9,9 +9,15 @@ struct ChatMessage: Identifiable, Equatable {
         case system
     }
 
-    let id = UUID()
+    let id: UUID
     let role: Role
     let text: String
+
+    init(id: UUID = UUID(), role: Role, text: String) {
+        self.id = id
+        self.role = role
+        self.text = text
+    }
 }
 
 @MainActor
@@ -33,6 +39,7 @@ final class QuickAppViewModel: ObservableObject {
 
     private let webWorkbench: WebWorkbenchManaging
     private let tailscaleLauncher: TailscaleLaunching
+    private var pendingSendMessageID: UUID?
 
     init(
         config: QuickAppConfig,
@@ -47,6 +54,7 @@ final class QuickAppViewModel: ObservableObject {
         self.webWorkbench.setAssistantMessageHandler { [weak self] text in
             guard let self else { return }
             DispatchQueue.main.async {
+                self.finishPendingSend(with: "已收到远端回复")
                 self.messages.append(ChatMessage(role: .assistant, text: text))
             }
         }
@@ -132,7 +140,9 @@ final class QuickAppViewModel: ObservableObject {
             return
         }
         messages.append(ChatMessage(role: .user, text: trimmed))
-        messages.append(ChatMessage(role: .system, text: "正在发送..."))
+        let pendingID = UUID()
+        pendingSendMessageID = pendingID
+        messages.append(ChatMessage(id: pendingID, role: .system, text: "正在发送..."))
 
         webWorkbench.sendRawCommand(trimmed) { [weak self] result in
             guard let self else { return }
@@ -140,9 +150,10 @@ final class QuickAppViewModel: ObservableObject {
                 switch result {
                 case .success:
                     self.lastActionMessage = "已发送自定义指令"
+                    self.finishPendingSend(with: "已发送，等待远端回复...")
                 case let .failure(error):
                     self.lastActionMessage = "发送失败：\(error.localizedDescription)"
-                    self.messages.append(ChatMessage(role: .system, text: "发送失败：\(error.localizedDescription)"))
+                    self.finishPendingSend(with: "发送失败：\(error.localizedDescription)")
                 }
             }
         }
@@ -153,5 +164,16 @@ final class QuickAppViewModel: ObservableObject {
         guard !text.isEmpty else { return }
         inputText = ""
         sendCommand(text)
+    }
+
+    private func finishPendingSend(with text: String) {
+        guard let id = pendingSendMessageID,
+              let idx = messages.firstIndex(where: { $0.id == id }) else {
+            messages.append(ChatMessage(role: .system, text: text))
+            pendingSendMessageID = nil
+            return
+        }
+        messages[idx] = ChatMessage(id: id, role: .system, text: text)
+        pendingSendMessageID = nil
     }
 }
