@@ -210,27 +210,25 @@ final class QuickAppViewModel: ObservableObject {
                 guard let self else { return }
                 guard self.pendingSendMessageID != nil else { return }
 
-                self.webWorkbench.fetchLatestAssistantMessage { result in
-                    DispatchQueue.main.async {
-                        guard self.pendingSendMessageID != nil else { return }
-                        switch result {
-                        case let .success(text):
-                            if let text, self.shouldAppendAssistant(text) {
-                                self.finishPendingSend(with: "已收到远端回复")
-                                self.messages.append(ChatMessage(role: .assistant, text: text))
-                                return
-                            }
-                        case .failure:
-                            break
-                        }
-
-                        if Date().timeIntervalSince(start) >= timeout {
-                            self.finishPendingSend(with: "已发送，但仍未抓到回复。请点“网页登录”确认远端页面是否真的有回包。")
+                self.pollLatestAssistantMessage { result in
+                    guard self.pendingSendMessageID != nil else { return }
+                    switch result {
+                    case let .success(text):
+                        if let text, self.shouldAppendAssistant(text) {
+                            self.finishPendingSend(with: "已收到远端回复")
+                            self.messages.append(ChatMessage(role: .assistant, text: text))
                             return
                         }
-
-                        scheduleNext()
+                    case .failure:
+                        break
                     }
+
+                    if Date().timeIntervalSince(start) >= timeout {
+                        self.finishPendingSend(with: "已发送，但仍未抓到回复。请点“网页登录”确认远端页面是否真的有回包。")
+                        return
+                    }
+
+                    scheduleNext()
                 }
             }
 
@@ -254,5 +252,13 @@ final class QuickAppViewModel: ObservableObject {
             return false
         }
         return true
+    }
+
+    private func pollLatestAssistantMessage(completion: @escaping (Result<String?, Error>) -> Void) {
+        if let concrete = webWorkbench as? WKWebViewWorkbench {
+            concrete.fetchLatestAssistantMessage(completion: completion)
+            return
+        }
+        completion(.success(nil))
     }
 }

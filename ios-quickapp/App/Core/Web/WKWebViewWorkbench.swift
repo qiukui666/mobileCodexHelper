@@ -7,9 +7,16 @@ protocol WebWorkbenchManaging: AnyObject {
     func loadConfiguredURL()
     func load(url: URL)
     func reload()
+    func fetchLatestAssistantMessage(completion: @escaping (Result<String?, Error>) -> Void)
     func clearSession(completion: ((Result<Void, Error>) -> Void)?)
     func sendPresetCommand(_ preset: CommandPreset, completion: ((Result<Void, Error>) -> Void)?)
     func sendRawCommand(_ command: String, completion: ((Result<Void, Error>) -> Void)?)
+}
+
+extension WebWorkbenchManaging {
+    func fetchLatestAssistantMessage(completion: @escaping (Result<String?, Error>) -> Void) {
+        completion(.success(nil))
+    }
 }
 
 final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageHandler, WKNavigationDelegate {
@@ -74,6 +81,22 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 return
             }
             completion?(.success(()))
+        }
+    }
+
+    func fetchLatestAssistantMessage(completion: @escaping (Result<String?, Error>) -> Void) {
+        let script = Self.makeLatestAssistantProbeScript()
+        webView.evaluateJavaScript(script) { raw, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+            let text = (raw as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let text, !text.isEmpty {
+                completion(.success(text))
+            } else {
+                completion(.success(nil))
+            }
         }
     }
 
@@ -294,6 +317,46 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
           setInterval(scan, 1200);
           scan();
           return true;
+        })();
+        """
+    }
+
+    private static func makeLatestAssistantProbeScript() -> String {
+        """
+        (function() {
+          function textOf(el) {
+            if (!el) return '';
+            const t = (el.innerText || el.textContent || '').trim();
+            return t;
+          }
+
+          const strictSelectors = [
+            '[data-role="assistant-message"]',
+            '.assistant-message',
+            '[data-message-author="assistant"]',
+            '[data-testid*="assistant"]',
+            '.message.assistant'
+          ];
+          const strictNodes = [];
+          for (const sel of strictSelectors) {
+            document.querySelectorAll(sel).forEach(n => strictNodes.push(n));
+          }
+          for (let i = strictNodes.length - 1; i >= 0; i--) {
+            const t = textOf(strictNodes[i]);
+            if (t) return t;
+          }
+
+          // Fallback: scan elements whose class/id hints assistant/ai/bot.
+          const all = Array.from(document.querySelectorAll('div,article,section,p,span'));
+          for (let i = all.length - 1; i >= 0; i--) {
+            const n = all[i];
+            const key = ((n.className || '') + ' ' + (n.id || '')).toLowerCase();
+            if (!/(assistant|ai|bot|reply|response)/.test(key)) continue;
+            const t = textOf(n);
+            if (t && t.length > 1 && t.length < 8000) return t;
+          }
+
+          return '';
         })();
         """
     }
