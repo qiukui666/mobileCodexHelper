@@ -1,0 +1,79 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - bot/ios-ipa-artifact
+    paths:
+      - 'ios-quickapp/**'
+      - '.github/workflows/ios-unsigned-ipa.yml'
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ios-quickapp
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned .app for iphoneos
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -project MobileCodexQuick.xcodeproj \
+            -scheme MobileCodexQuick \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Locate .app
+        run: |
+          set -euxo pipefail
+          APP_PATH="$(find build/Build/Products -type d -name 'MobileCodexQuick.app' | head -n 1)"
+          if [[ -z "$APP_PATH" ]]; then
+            echo "MobileCodexQuick.app not found"
+            find build/Build/Products -maxdepth 4 -type d | sort || true
+            exit 1
+          fi
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "$APP_PATH"
+
+      - name: Package IPA
+        run: |
+          set -euxo pipefail
+          chmod +x ./scripts/package-ipa.sh
+          ./scripts/package-ipa.sh "$APP_PATH" MobileCodexQuick.ipa
+          ls -lah MobileCodexQuick.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MobileCodexQuick-unsigned-ipa
+          path: ios-quickapp/MobileCodexQuick.ipa
+          if-no-files-found: error
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-products
+          path: |
+            ios-quickapp/build
+            ios-quickapp/*.xcresult
+          if-no-files-found: ignore
