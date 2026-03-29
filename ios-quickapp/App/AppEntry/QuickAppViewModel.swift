@@ -41,6 +41,7 @@ final class QuickAppViewModel: ObservableObject {
     private let tailscaleLauncher: TailscaleLaunching
     private var pendingSendMessageID: UUID?
     private var pendingTimeoutWorkItem: DispatchWorkItem?
+    private var replyPollWorkItem: DispatchWorkItem?
 
     init(
         config: QuickAppConfig,
@@ -159,7 +160,8 @@ final class QuickAppViewModel: ObservableObject {
                 switch result {
                 case .success:
                     self.lastActionMessage = "已发送自定义指令"
-                    self.finishPendingSend(with: "已发送，等待远端回复...")
+                    self.updatePendingSend(with: "已发送，等待远端回复...")
+                    self.startReplyPolling()
                 case let .failure(error):
                     self.lastActionMessage = "发送失败：\(error.localizedDescription)"
                     self.finishPendingSend(with: "发送失败：\(error.localizedDescription)")
@@ -178,6 +180,8 @@ final class QuickAppViewModel: ObservableObject {
     private func finishPendingSend(with text: String) {
         pendingTimeoutWorkItem?.cancel()
         pendingTimeoutWorkItem = nil
+        replyPollWorkItem?.cancel()
+        replyPollWorkItem = nil
         guard let id = pendingSendMessageID,
               let idx = messages.firstIndex(where: { $0.id == id }) else {
             messages.append(ChatMessage(role: .system, text: text))
@@ -186,5 +190,69 @@ final class QuickAppViewModel: ObservableObject {
         }
         messages[idx] = ChatMessage(id: id, role: .system, text: text)
         pendingSendMessageID = nil
+    }
+
+    private func updatePendingSend(with text: String) {
+        guard let id = pendingSendMessageID,
+              let idx = messages.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        messages[idx] = ChatMessage(id: id, role: .system, text: text)
+    }
+
+    private func startReplyPolling() {
+        replyPollWorkItem?.cancel()
+        let start = Date()
+        let timeout: TimeInterval = 35
+
+        func scheduleNext() {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                guard self.pendingSendMessageID != nil else { return }
+
+                self.webWorkbench.fetchLatestAssistantMessage { result in
+                    DispatchQueue.main.async {
+                        guard self.pendingSendMessageID != nil else { return }
+                        switch result {
+                        case let .success(text):
+                            if let text, self.shouldAppendAssistant(text) {
+                                self.finishPendingSend(with: "已收到远端回复")
+                                self.messages.append(ChatMessage(role: .assistant, text: text))
+                                return
+                            }
+                        case .failure:
+                            break
+                        }
+
+                        if Date().timeIntervalSince(start) >= timeout {
+                            self.finishPendingSend(with: "已发送，但仍未抓到回复。请点“网页登录”确认远端页面是否真的有回包。")
+                            return
+                        }
+
+                        scheduleNext()
+                    }
+                }
+            }
+
+            self.replyPollWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+        }
+
+        scheduleNext()
+    }
+
+    private func shouldAppendAssistant(_ text: String) -> Bool {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        if normalized == "已发送，等待远端回复..." || normalized == "正在发送..." {
+            return false
+        }
+        if messages.contains(where: { $0.role == .user && $0.text == normalized }) {
+            return false
+        }
+        if messages.contains(where: { $0.role == .assistant && $0.text == normalized }) {
+            return false
+        }
+        return true
     }
 }
