@@ -125,9 +125,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             }
             if let dict = raw as? [String: Any] {
                 let sent = (dict["sent"] as? Bool) ?? false
-                let clicked = (dict["clicked"] as? Bool) ?? false
-                let submitted = (dict["submitted"] as? Bool) ?? false
-                if !sent || (!clicked && !submitted) {
+                if !sent {
                     let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
                     resolve(.failure(NSError(
                         domain: "MobileCodexQuick",
@@ -221,7 +219,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
             return {
               sent: sent,
-              reason: sent ? "ok" : "未找到输入控件",
+              reason: sent ? "已注入输入并尝试发送" : "未找到输入控件",
               clicked: clicked,
               submitted: submitted
             };
