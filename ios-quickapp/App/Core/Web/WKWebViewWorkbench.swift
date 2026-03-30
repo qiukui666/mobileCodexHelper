@@ -168,13 +168,13 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
             let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
             let debug = (dict["debug"] as? String) ?? ""
-            let shouldRecover = retryCount < 3 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened"))
+            let shouldRecover = retryCount < 3 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened"))
             if shouldRecover {
-                let shouldReload = !(debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened"))
+                let shouldReload = !(debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened"))
                 if shouldReload {
                     self.webView.reload()
                 }
-                let delay: TimeInterval = (debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened")) ? 2.0 : 1.4
+                let delay: TimeInterval = (debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened")) ? 2.0 : 1.4
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self else { return }
                     self.executeDispatch(command: command, retryCount: retryCount + 1, completion: completion)
@@ -566,6 +566,21 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 return node;
               }
 
+              function pickBestClickableInside(node) {
+                if (!node || !node.querySelectorAll) return clickableAncestor(node);
+                const candidates = Array.from(node.querySelectorAll('a[href],button,[role="button"],[onclick],[tabindex]'));
+                for (const c of candidates) {
+                  if (!isVisible(c)) continue;
+                  const t = normText(c.innerText || c.textContent || '');
+                  const href = normText(c.getAttribute && c.getAttribute('href') || '');
+                  if (t.includes('open menu')) continue;
+                  if (href.includes('/session/') || href.includes('/workspace/') || t.includes('session') || t.includes('chat') || t.includes('conversation')) {
+                    return c;
+                  }
+                }
+                return clickableAncestor(node);
+              }
+
               function clickProjectEntry() {
                 const selectors = [
                   '[data-testid*="project-item"]',
@@ -602,6 +617,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   if (selector.indexOf('project') >= 0) score += 20;
                   if (selector === 'a' || selector.indexOf(' a') >= 0) score += 15;
                   if (selector === 'button' || selector.indexOf('button') >= 0) score += 10;
+                  if (selector === 'div' || selector === 'li') score -= 20;
                   if (text.includes('projects') || text.includes('conversations')) score -= 80;
                   if (text.includes('choose your project') || text.includes('select a project')) score -= 80;
                   if (text.includes('open menu') || label.includes('open menu')) score -= 120;
@@ -625,7 +641,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     if (!hasProjectSignal(text, label, href)) continue;
                     const isBroadSelector = (selector === 'div' || selector === 'li' || selector === '[role="button"]');
                     if (isBroadSelector && !href && text.length > 120) continue;
-                    const target = clickableAncestor(node);
+                    const target = pickBestClickableInside(node);
                     if (!target || !isVisible(target)) continue;
                     const targetText = normText(target.innerText || target.textContent || '');
                     const targetLabel = normText(target.getAttribute && (target.getAttribute('aria-label') || target.getAttribute('title')) || '');
@@ -643,6 +659,44 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     pushDebug('project-opened:' + best.selector + ':score=' + best.score + ':' + String(best.text || '').slice(0, 64));
                     return true;
                   } catch (_) {}
+                }
+                return false;
+              }
+
+              function clickConversationEntry() {
+                const selectors = [
+                  '[data-testid*="conversation-item"]',
+                  '[data-testid*="session-item"]',
+                  '[data-testid*="chat-item"]',
+                  'a[href*="/session/"]',
+                  'a[href*="/workspace/"]',
+                  'aside a',
+                  'nav a',
+                  '[role="listitem"] a',
+                  '[role="treeitem"] a',
+                  '[role="menuitem"] a',
+                  '[role="button"]'
+                ];
+                for (const selector of selectors) {
+                  const nodes = queryAllDeep(selector);
+                  for (const node of nodes) {
+                    if (!isVisible(node)) continue;
+                    const text = normText(node.innerText || node.textContent || '');
+                    const label = normText(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
+                    const href = normText(node.getAttribute && node.getAttribute('href') || '');
+                    if (!text && !label && !href) continue;
+                    if (text.includes('projects') || text.includes('conversations') || text.includes('choose your project')) continue;
+                    if (text.includes('open menu') || label.includes('open menu')) continue;
+                    const sessionLike = href.includes('/session/') || href.includes('/workspace/') || text.includes('session') || text.includes('chat') || text.includes('conversation');
+                    if (!sessionLike) continue;
+                    const target = pickBestClickableInside(node);
+                    if (!target || !isVisible(target)) continue;
+                    try {
+                      target.click();
+                      pushDebug('conversation-opened:' + selector + ':' + (text || label || href).slice(0, 64));
+                      return true;
+                    } catch (_) {}
+                  }
                 }
                 return false;
               }
@@ -679,6 +733,8 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 pushDebug('project-picker-no-hit');
                 return false;
               }
+
+              if (clickConversationEntry()) return true;
 
               const openPhrases = [
                 'new chat', 'new session', 'new conversation',
