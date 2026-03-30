@@ -150,10 +150,12 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 let sent = (dict["sent"] as? Bool) ?? false
                 if !sent {
                     let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
+                    let debug = (dict["debug"] as? String) ?? ""
+                    let suffix = debug.isEmpty ? "" : " [debug: \(debug)]"
                     resolve(.failure(NSError(
                         domain: "MobileCodexQuick",
                         code: 1002,
-                        userInfo: [NSLocalizedDescriptionKey: "发送失败：\(reason)"]
+                        userInfo: [NSLocalizedDescriptionKey: "发送失败：\(reason)\(suffix)"]
                     )))
                     return
                 }
@@ -201,27 +203,61 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             var sent = false;
             var clicked = false;
             var submitted = false;
+            var debug = [];
 
             if (input) {
+                debug.push('input-found');
                 if ('value' in input) {
-                    input.value = command;
+                    try {
+                        const setter =
+                          Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype, 'value')?.set
+                          || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value')?.set;
+                        if (setter) {
+                            setter.call(input, command);
+                            debug.push('value-setter');
+                        } else {
+                            input.value = command;
+                            debug.push('value-direct');
+                        }
+                    } catch (_) {
+                        input.value = command;
+                        debug.push('value-fallback');
+                    }
                 } else {
                     input.textContent = command;
+                    debug.push('contenteditable-set');
                 }
                 if (input.focus) { input.focus(); }
+                try {
+                  if (input._valueTracker && typeof input._valueTracker.setValue === 'function') {
+                    input._valueTracker.setValue('');
+                    debug.push('react-value-tracker');
+                  }
+                } catch (_) {}
                 input.dispatchEvent(new Event('input', { bubbles: true }));
                 input.dispatchEvent(new Event('change', { bubbles: true }));
+
+                // Try invoking React handlers directly when available.
+                try {
+                  const reactPropsKey = Object.keys(input).find((k) => k.startsWith('__reactProps$'));
+                  if (reactPropsKey && input[reactPropsKey]?.onChange) {
+                    input[reactPropsKey].onChange({ target: input, currentTarget: input, type: 'change' });
+                    debug.push('react-onchange-called');
+                  }
+                } catch (_) {}
+
                 input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
                 input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true }));
                 input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
-                sent = true;
                 const form = input.closest ? input.closest('form') : null;
                 if (form && typeof form.requestSubmit === 'function') {
                     form.requestSubmit();
                     submitted = true;
+                    debug.push('form-requestSubmit');
                 } else if (form && typeof form.submit === 'function') {
                     form.submit();
                     submitted = true;
+                    debug.push('form-submit');
                 }
             }
 
@@ -229,19 +265,29 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             const sendSelectors = ['button[type="submit"]'];
             for (const selector of sendSelectors) {
                 const button = targetForm ? targetForm.querySelector(selector) : document.querySelector(selector);
-                if (button && !button.disabled) {
+                if (button) {
+                    if (button.disabled) {
+                        debug.push('button-disabled');
+                        continue;
+                    }
+                    try { button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); } catch (_) {}
+                    try { button.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true })); } catch (_) {}
+                    try { button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true })); } catch (_) {}
                     button.click();
                     clicked = true;
-                    sent = true;
+                    debug.push('button-clicked');
                     break;
                 }
             }
 
+            sent = clicked || submitted;
+
             return {
               sent: sent,
-              reason: sent ? "已注入输入并尝试发送" : "未找到输入控件",
+              reason: sent ? "已触发提交动作" : "未触发提交（可能输入未进入React状态或按钮仍禁用）",
               clicked: clicked,
-              submitted: submitted
+              submitted: submitted,
+              debug: debug.join(',')
             };
         })();
         """
