@@ -25,7 +25,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
     private let config: QuickAppConfig
     private var assistantMessageHandler: ((String) -> Void)?
     private let bridgeHandlerName = "mobilecodexBridge"
-    private let jsTimeoutSeconds: TimeInterval = 8
+    private let jsTimeoutSeconds: TimeInterval = 12
 
     init(config: QuickAppConfig) {
         self.config = config
@@ -121,7 +121,6 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
     }
 
     func sendRawCommand(_ command: String, completion: ((Result<Void, Error>) -> Void)?) {
-        let script = Self.makeDispatchScript(command: command)
         var finished = false
         let lock = NSLock()
 
@@ -141,34 +140,50 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             )))
         }
 
-        webView.evaluateJavaScript(script) { raw, error in
+        executeDispatch(command: command, recoveredOnce: false, completion: resolve)
+    }
+
+    private func executeDispatch(command: String, recoveredOnce: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
+        let script = Self.makeDispatchScript(command: command)
+        webView.evaluateJavaScript(script) { [weak self] raw, error in
+            guard let self else { return }
             if let error {
-                resolve(.failure(error))
+                completion(.failure(error))
                 return
             }
-            if let dict = raw as? [String: Any] {
-                let sent = (dict["sent"] as? Bool) ?? false
-                if !sent {
-                    let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
-                    let debug = (dict["debug"] as? String) ?? ""
-                    let suffix = debug.isEmpty ? "" : " [debug: \(debug)]"
-                    resolve(.failure(NSError(
-                        domain: "MobileCodexQuick",
-                        code: 1002,
-                        userInfo: [NSLocalizedDescriptionKey: "发送失败：\(reason)\(suffix)"]
-                    )))
-                    return
-                }
-            } else {
-                let reason = "页面脚本返回异常"
-                resolve(.failure(NSError(
+            guard let dict = raw as? [String: Any] else {
+                completion(.failure(NSError(
                     domain: "MobileCodexQuick",
                     code: 1002,
-                    userInfo: [NSLocalizedDescriptionKey: "发送失败：\(reason)"]
+                    userInfo: [NSLocalizedDescriptionKey: "发送失败：页面脚本返回异常"]
                 )))
                 return
             }
-            resolve(.success(()))
+
+            let sent = (dict["sent"] as? Bool) ?? false
+            if sent {
+                completion(.success(()))
+                return
+            }
+
+            let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
+            let debug = (dict["debug"] as? String) ?? ""
+            let shouldRecover = !recoveredOnce && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0"))
+            if shouldRecover {
+                self.webView.load(URLRequest(url: self.config.defaultWorkbenchURL))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+                    guard let self else { return }
+                    self.executeDispatch(command: command, recoveredOnce: true, completion: completion)
+                }
+                return
+            }
+
+            let suffix = debug.isEmpty ? "" : " [debug: \(debug)]"
+            completion(.failure(NSError(
+                domain: "MobileCodexQuick",
+                code: 1002,
+                userInfo: [NSLocalizedDescriptionKey: "发送失败：\(reason)\(suffix)"]
+            )))
         }
     }
 
@@ -179,6 +194,8 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
         (function() {
             const command = '\(safeCommand)';
             const debug = [];
+            try { debug.push('href:' + String(window.location && window.location.href || '')); } catch (_) {}
+            try { debug.push('ready:' + String(document.readyState || '')); } catch (_) {}
 
             function pushDebug(v) {
               try { debug.push(String(v)); } catch (_) {}
