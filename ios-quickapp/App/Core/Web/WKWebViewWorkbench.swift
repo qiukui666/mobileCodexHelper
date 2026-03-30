@@ -557,8 +557,18 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 return false;
               }
 
+              function clickableAncestor(node) {
+                if (!node) return null;
+                if (node.closest) {
+                  const c = node.closest('a,button,[role="button"],[onclick],[tabindex]');
+                  if (c) return c;
+                }
+                return node;
+              }
+
               function clickProjectEntry() {
                 const selectors = [
+                  '*',
                   '[data-testid*="project-item"]',
                   '[data-testid*="project"] a',
                   '[data-testid*="project"] [role="button"]',
@@ -584,9 +594,12 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     if (text === 'projects' || text === 'conversations') continue;
                     if (label === 'projects' || label === 'conversations') continue;
                     if (text.includes('choose your project') || text.includes('select a project')) continue;
+                    if (text.includes('open menu') || label.includes('open menu')) continue;
                     if (!hasProjectSignal(text, label, href)) continue;
+                    const target = clickableAncestor(node);
+                    if (!target || !isVisible(target)) continue;
                     try {
-                      node.click();
+                      target.click();
                       pushDebug('project-opened:' + selector + ':' + (text || label || href).slice(0, 64));
                       return true;
                     } catch (_) {}
@@ -639,14 +652,17 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   if (!text && !label && !href) continue;
                   if (text === 'projects' || text === 'conversations') continue;
                   if (label === 'projects' || label === 'conversations') continue;
+                  if (text.includes('open menu') || label.includes('open menu')) continue;
                   const matches = openPhrases.some((p) => label.includes(p) || text.includes(p))
                     || href.includes('/session/')
                     || href.includes('/workspace/')
                     || href.includes('workspace');
                   if (!matches) continue;
+                  const target = clickableAncestor(node);
+                  if (!target || !isVisible(target)) continue;
                   try {
-                    node.click();
-                    clicked.add(node);
+                    target.click();
+                    clicked.add(target);
                     pushDebug('nav-opened:' + selector + ':' + (text || label || href).slice(0, 64));
                     return true;
                   } catch (_) {}
