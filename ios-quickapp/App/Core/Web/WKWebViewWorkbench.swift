@@ -528,39 +528,68 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               return String(s || '').trim().toLowerCase();
             }
 
+            function sampleBodyText() {
+              try {
+                const t = String((document.body && (document.body.innerText || document.body.textContent)) || '');
+                const oneLine = t.replace(/\s+/g, ' ').trim();
+                return oneLine.slice(0, 120);
+              } catch (_) {
+                return '';
+              }
+            }
+
             function maybeOpenConversation() {
               const openPhrases = [
                 'new chat', 'new session', 'new conversation',
+                'continue', 'resume', 'open',
                 'chat', 'session',
-                '新建会话', '新对话', '会话', '聊天'
+                'workspace', 'project',
+                '新建会话', '新对话', '会话', '聊天', '继续', '打开', '工作区', '项目'
               ];
               const selectors = [
                 'a[href*="/session/"]',
+                'a[href*="/workspace/"]',
+                'a[href*="workspace"]',
                 'button[data-testid*="new"]',
                 'button[data-testid*="chat"]',
+                'button[data-testid*="workspace"]',
+                '[data-testid*="workspace"]',
+                '[data-testid*="session"]',
+                '[data-testid*="conversation"]',
+                '[class*="workspace"]',
+                '[class*="session"]',
+                '[class*="conversation"]',
+                '[onclick]',
                 '[role="button"]',
                 'a',
-                'button'
+                'button',
+                'li',
+                'div'
               ];
               const clicked = new Set();
+              let scanned = 0;
               for (const selector of selectors) {
                 const nodes = queryAllDeep(selector);
                 for (const node of nodes) {
+                  scanned += 1;
                   if (!isVisible(node) || clicked.has(node)) continue;
                   const label = normText(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
                   const text = normText(node.innerText || node.textContent || '');
                   const href = normText(node.getAttribute && node.getAttribute('href') || '');
                   const matches = openPhrases.some((p) => label.includes(p) || text.includes(p))
-                    || href.includes('/session/');
+                    || href.includes('/session/')
+                    || href.includes('/workspace/')
+                    || href.includes('workspace');
                   if (!matches) continue;
                   try {
                     node.click();
                     clicked.add(node);
-                    pushDebug('nav-opened:' + selector);
+                    pushDebug('nav-opened:' + selector + ':' + text.slice(0, 48));
                     return true;
                   } catch (_) {}
                 }
               }
+              pushDebug('nav-scan:' + scanned);
               return false;
             }
 
@@ -569,6 +598,8 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     detail: { command: command, source: 'ios-quickapp' }
                 }));
             } catch (_) {}
+            const bodyHead = sampleBodyText();
+            if (bodyHead) pushDebug('body-head:' + bodyHead);
 
             const input = findInput();
             if (!input) pushDebug('input-not-found');
