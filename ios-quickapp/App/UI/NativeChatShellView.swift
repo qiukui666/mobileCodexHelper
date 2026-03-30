@@ -1,15 +1,9 @@
 import SwiftUI
 import UIKit
-import WebKit
 
 struct NativeChatShellView: View {
     @ObservedObject var viewModel: QuickAppViewModel
     @State private var showWebLoginSheet = false
-    @State private var loginWebView: WKWebView = {
-        let config = WKWebViewConfiguration()
-        config.defaultWebpagePreferences.allowsContentJavaScript = true
-        return WKWebView(frame: .zero, configuration: config)
-    }()
 
     var body: some View {
         ZStack {
@@ -28,14 +22,7 @@ struct NativeChatShellView: View {
         .background(Color(uiColor: .systemBackground))
         .sheet(isPresented: $showWebLoginSheet) {
             NavigationStack {
-                WebWorkbenchContainerView(webView: loginWebView)
-                    .onAppear {
-                        let target = URL(string: viewModel.urlText.trimmingCharacters(in: .whitespacesAndNewlines))
-                            ?? URL(string: viewModel.defaultURLString)
-                        if let target {
-                            loginWebView.load(URLRequest(url: target))
-                        }
-                    }
+                WebWorkbenchContainerView(webView: viewModel.webView)
                     .navigationTitle("网页登录")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
@@ -43,15 +30,9 @@ struct NativeChatShellView: View {
                             Button("关闭") { showWebLoginSheet = false }
                         }
                         ToolbarItem(placement: .topBarTrailing) {
-                            Button("刷新") { loginWebView.reload() }
+                            Button("刷新") { viewModel.reloadWorkbench() }
                         }
                     }
-            }
-        }
-        .onChange(of: showWebLoginSheet) { showing in
-            if !showing {
-                // 登录页关闭后刷新后台工作台，确保会话 cookie/state 立即生效到后台收发链路。
-                viewModel.reloadWorkbench()
             }
         }
     }
