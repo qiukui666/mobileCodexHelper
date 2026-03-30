@@ -168,7 +168,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
             let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
             let debug = (dict["debug"] as? String) ?? ""
-            let shouldRecover = retryCount < 2 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened"))
+            let shouldRecover = retryCount < 3 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened"))
             if shouldRecover {
                 let shouldReload = !(debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened"))
                 if shouldReload {
@@ -584,7 +584,12 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   '[role="treeitem"]',
                   '[role="menuitem"]',
                   'a[href*="/session/"]',
-                  'a[href*="/workspace/"]'
+                  'a[href*="/workspace/"]',
+                  'button',
+                  'a',
+                  '[role="button"]',
+                  'li',
+                  'div'
                 ];
                 for (const selector of selectors) {
                   const nodes = queryAllDeep(selector);
@@ -599,6 +604,8 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     if (text.includes('choose your project') || text.includes('select a project')) continue;
                     if (text.includes('open menu') || label.includes('open menu')) continue;
                     if (!hasProjectSignal(text, label, href)) continue;
+                    const isBroadSelector = (selector === 'div' || selector === 'li' || selector === '[role="button"]');
+                    if (isBroadSelector && !href && text.length > 120) continue;
                     const target = clickableAncestor(node);
                     if (!target || !isVisible(target)) continue;
                     try {
