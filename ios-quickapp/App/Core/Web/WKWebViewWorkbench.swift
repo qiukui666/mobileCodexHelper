@@ -174,7 +174,8 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 if shouldReload {
                     self.webView.reload()
                 }
-                let delay: TimeInterval = (debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress") || debug.contains("sidebar-fallback-opened")) ? 2.4 : 1.4
+                let delay: TimeInterval = (debug.contains("project-opened") || debug.contains("menu-opened")) ? 4.0
+                    : ((debug.contains("nav-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress") || debug.contains("sidebar-fallback-opened")) ? 2.4 : 1.4)
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self else { return }
                     self.executeDispatch(command: command, retryCount: retryCount + 1, completion: completion)
@@ -546,6 +547,17 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 || pageText.includes('projects conversations');
               const projectNameMatch = pageText.match(/([a-z0-9._-]+)\\s+\\d+\\s+sessions/);
               const projectNameHint = projectNameMatch ? projectNameMatch[1] : '';
+              const navState = (function() {
+                try {
+                  if (!window.__mobilecodexNavState) {
+                    window.__mobilecodexNavState = { tabClicked: false, menuOpened: false, projectOpened: false };
+                  }
+                  return window.__mobilecodexNavState;
+                } catch (_) {
+                  return { tabClicked: false, menuOpened: false, projectOpened: false };
+                }
+              })();
+              pushDebug('nav-state:t=' + (navState.tabClicked ? '1' : '0') + ',m=' + (navState.menuOpened ? '1' : '0') + ',p=' + (navState.projectOpened ? '1' : '0'));
 
               function hasProjectSignal(text, label, href) {
                 if (text.includes(' sessions')) return true;
@@ -698,6 +710,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 if (best && best.target) {
                   try {
                     forceClick(best.target, 'project-force-click');
+                    navState.projectOpened = true;
                     const tag = normText(best.target.tagName || '');
                     pushDebug('project-opened:' + best.selector + ':tag=' + tag + ':score=' + best.score + ':' + String(best.text || '').slice(0, 64));
                     return true;
@@ -725,6 +738,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   const target = pickBestClickableInside(fallbackNode);
                   if (target && isVisible(target)) {
                     forceClick(target, 'project-text-fallback-click');
+                    navState.projectOpened = true;
                     const tag = normText(target.tagName || '');
                     pushDebug('project-opened:text-fallback:tag=' + tag + ':len=' + fallbackLen);
                     return true;
@@ -818,7 +832,10 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     const text = normText(node.innerText || node.textContent || '');
                     const label = normText(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
                     if (!(text === 'conversations' || label === 'conversations' || text.includes('conversations'))) continue;
-                    if (forceClick(node, 'conversations-tab-clicked')) return true;
+                    if (forceClick(node, 'conversations-tab-clicked')) {
+                      navState.tabClicked = true;
+                      return true;
+                    }
                   }
                 }
                 return false;
@@ -842,6 +859,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     if (!(label.includes('open menu') || text.includes('open menu') || text === 'menu')) continue;
                     try {
                       forceClick(node, 'menu-force-click');
+                      navState.menuOpened = true;
                       pushDebug('menu-opened:' + selector);
                       return true;
                     } catch (_) {}
@@ -852,12 +870,12 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
               if (isProjectPicker) {
                 let progressed = false;
-                if (clickConversationsTab()) progressed = true;
-                if (clickProjectEntry()) progressed = true;
+                if (!navState.tabClicked && clickConversationsTab()) progressed = true;
+                if (!navState.projectOpened && clickProjectEntry()) progressed = true;
                 if (clickConversationEntry()) return true;
-                if (clickOpenMenuButton()) {
+                if (!navState.menuOpened && clickOpenMenuButton()) {
                   progressed = true;
-                  if (clickProjectEntry()) progressed = true;
+                  if (!navState.projectOpened && clickProjectEntry()) progressed = true;
                   if (clickConversationEntry()) return true;
                 }
                 if (clickSidebarFallbackItem()) {
