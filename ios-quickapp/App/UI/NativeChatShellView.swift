@@ -12,16 +12,18 @@ struct NativeChatShellView: View {
     }()
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            messages
-            composer
+        ZStack {
+            VStack(spacing: 0) {
+                header
+                Divider()
+                messages
+                composer
+            }
 
-            // 后台承载工作台，不直接展示网页界面
+            // 后台承载工作台：保持真实可布局尺寸，否则部分站点会因视口过小不渲染输入框。
             WebWorkbenchContainerView(webView: viewModel.webView)
-                .frame(height: 1)
                 .opacity(0.01)
+                .allowsHitTesting(false)
         }
         .background(Color(uiColor: .systemBackground))
         .sheet(isPresented: $showWebLoginSheet) {
