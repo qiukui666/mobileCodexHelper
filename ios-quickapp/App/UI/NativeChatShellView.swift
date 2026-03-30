@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct NativeChatShellView: View {
     @ObservedObject var viewModel: QuickAppViewModel
@@ -106,30 +107,47 @@ struct NativeChatShellView: View {
         case .user:
             HStack {
                 Spacer()
-                Text(message.text)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .foregroundStyle(.white)
-                    .background(Color.blue)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(message.text)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(.white)
+                        .background(Color.blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    copyButton(text: message.text)
+                }
             }
         case .assistant:
             HStack {
-                Text(message.text)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color(uiColor: .secondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message.text)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color(uiColor: .secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    copyButton(text: message.text)
+                }
                 Spacer()
             }
         case .system:
-            HStack {
-                Spacer()
+            VStack(spacing: 4) {
                 Text(message.text)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                Spacer()
+                copyButton(text: message.text)
             }
+            .frame(maxWidth: .infinity)
         }
+    }
+
+    private func copyButton(text: String) -> some View {
+        Button {
+            UIPasteboard.general.string = text
+        } label: {
+            Label("复制", systemImage: "doc.on.doc")
+                .font(.caption2)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
     }
 }
