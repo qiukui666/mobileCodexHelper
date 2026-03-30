@@ -591,6 +591,25 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   'li',
                   'div'
                 ];
+                let best = null;
+                let bestScore = -1;
+
+                function scoreNode(text, label, href, selector) {
+                  let score = 0;
+                  if (href.includes('/session/') || href.includes('/workspace/')) score += 90;
+                  if (text.includes(' sessions') || text.includes(' session')) score += 55;
+                  if (projectNameHint && (text.includes(projectNameHint) || label.includes(projectNameHint) || href.includes(projectNameHint))) score += 45;
+                  if (selector.indexOf('project') >= 0) score += 20;
+                  if (selector === 'a' || selector.indexOf(' a') >= 0) score += 15;
+                  if (selector === 'button' || selector.indexOf('button') >= 0) score += 10;
+                  if (text.includes('projects') || text.includes('conversations')) score -= 80;
+                  if (text.includes('choose your project') || text.includes('select a project')) score -= 80;
+                  if (text.includes('open menu') || label.includes('open menu')) score -= 120;
+                  if (text.length > 120) score -= 35;
+                  if (text.length > 220) score -= 45;
+                  return score;
+                }
+
                 for (const selector of selectors) {
                   const nodes = queryAllDeep(selector);
                   for (const node of nodes) {
@@ -608,12 +627,22 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     if (isBroadSelector && !href && text.length > 120) continue;
                     const target = clickableAncestor(node);
                     if (!target || !isVisible(target)) continue;
-                    try {
-                      target.click();
-                      pushDebug('project-opened:' + selector + ':' + (text || label || href).slice(0, 64));
-                      return true;
-                    } catch (_) {}
+                    const targetText = normText(target.innerText || target.textContent || '');
+                    const targetLabel = normText(target.getAttribute && (target.getAttribute('aria-label') || target.getAttribute('title')) || '');
+                    const targetHref = normText(target.getAttribute && target.getAttribute('href') || '');
+                    const score = scoreNode(targetText || text, targetLabel || label, targetHref || href, selector);
+                    if (score > bestScore) {
+                      bestScore = score;
+                      best = { target: target, text: (targetText || text || label || href), selector: selector, score: score };
+                    }
                   }
+                }
+                if (best && best.target) {
+                  try {
+                    best.target.click();
+                    pushDebug('project-opened:' + best.selector + ':score=' + best.score + ':' + String(best.text || '').slice(0, 64));
+                    return true;
+                  } catch (_) {}
                 }
                 return false;
               }
