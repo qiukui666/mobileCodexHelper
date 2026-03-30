@@ -56,6 +56,7 @@ final class QuickAppViewModel: ObservableObject {
         self.webWorkbench.setAssistantMessageHandler { [weak self] text in
             guard let self else { return }
             DispatchQueue.main.async {
+                guard self.shouldAppendAssistant(text) else { return }
                 self.finishPendingSend(with: "已收到远端回复")
                 self.messages.append(ChatMessage(role: .assistant, text: text))
             }

@@ -478,6 +478,8 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
           window.__mobilecodexObserverInstalled = true;
 
           const seen = new Set();
+          const bootUntil = Date.now() + 2500;
+          let state = { lastText: '', lastCount: 0 };
 
           function post(text) {
             try {
@@ -491,8 +493,30 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             } catch (_) {}
           }
 
+          function assistantNodes() {
+            const selectors = [
+              '.chat-message.assistant',
+              '[data-role="assistant"]',
+              '[data-message-author-role="assistant"]',
+              'article[data-testid*="assistant"]',
+              '.assistant'
+            ];
+            const out = [];
+            const uniq = new Set();
+            for (const selector of selectors) {
+              const nodes = Array.from(document.querySelectorAll(selector));
+              for (const node of nodes) {
+                if (!uniq.has(node)) {
+                  uniq.add(node);
+                  out.push(node);
+                }
+              }
+            }
+            return out;
+          }
+
           function extractAssistantTexts() {
-            const nodes = Array.from(document.querySelectorAll('.chat-message.assistant'));
+            const nodes = assistantNodes();
             return nodes.map((el) => {
               const body = el.querySelector('.prose, .markdown, .whitespace-pre-wrap') || el;
               return body && body.innerText ? body.innerText.trim() : '';
@@ -501,9 +525,25 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
           function scan() {
             const texts = extractAssistantTexts();
-            if (texts.length > 0) {
-              post(texts[texts.length - 1]);
+            if (texts.length === 0) return;
+            const latest = texts[texts.length - 1];
+            if (Date.now() < bootUntil) {
+              state.lastText = latest;
+              state.lastCount = texts.length;
+              return;
             }
+            if (!state.lastText) {
+              state.lastText = latest;
+              state.lastCount = texts.length;
+              return;
+            }
+            if (latest !== state.lastText) {
+              post(latest);
+              state.lastText = latest;
+              state.lastCount = texts.length;
+              return;
+            }
+            state.lastCount = texts.length;
           }
 
           const observer = new MutationObserver(() => scan());
@@ -524,13 +564,25 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             return t;
           }
 
-          const strictSelectors = ['.chat-message.assistant'];
-          const strictNodes = [];
-          for (const sel of strictSelectors) {
-            document.querySelectorAll(sel).forEach(n => strictNodes.push(n));
+          const selectors = [
+            '.chat-message.assistant',
+            '[data-role="assistant"]',
+            '[data-message-author-role="assistant"]',
+            'article[data-testid*="assistant"]',
+            '.assistant'
+          ];
+          const nodes = [];
+          const seen = new Set();
+          for (const sel of selectors) {
+            document.querySelectorAll(sel).forEach(n => {
+              if (!seen.has(n)) {
+                seen.add(n);
+                nodes.push(n);
+              }
+            });
           }
-          for (let i = strictNodes.length - 1; i >= 0; i--) {
-            const body = strictNodes[i].querySelector('.prose, .markdown, .whitespace-pre-wrap') || strictNodes[i];
+          for (let i = nodes.length - 1; i >= 0; i--) {
+            const body = nodes[i].querySelector('.prose, .markdown, .whitespace-pre-wrap') || nodes[i];
             const t = textOf(body);
             if (t) return t;
           }
