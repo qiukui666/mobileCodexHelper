@@ -205,6 +205,8 @@ final class QuickAppViewModel: ObservableObject {
         replyPollWorkItem?.cancel()
         let start = Date()
         let timeout: TimeInterval = 35
+        let autoReloadAfter: TimeInterval = 8
+        var didAutoReload = false
 
         func scheduleNext() {
             let work = DispatchWorkItem { [weak self] in
@@ -224,7 +226,14 @@ final class QuickAppViewModel: ObservableObject {
                         break
                     }
 
-                    if Date().timeIntervalSince(start) >= timeout {
+                    let elapsed = Date().timeIntervalSince(start)
+                    if !didAutoReload && elapsed >= autoReloadAfter {
+                        didAutoReload = true
+                        self.reloadWorkbench()
+                        self.updatePendingSend(with: "等待远端回复，已自动刷新连接一次...")
+                    }
+
+                    if elapsed >= timeout {
                         self.finishPendingSend(with: "已发送，但仍未抓到回复。请点“网页登录”确认远端页面是否真的有回包。")
                         return
                     }
