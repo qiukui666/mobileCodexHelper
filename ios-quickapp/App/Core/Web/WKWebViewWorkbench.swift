@@ -566,6 +566,21 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 return node;
               }
 
+              function forceClick(node, debugTag) {
+                if (!node) return false;
+                try { node.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true })); } catch (_) {}
+                try { node.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); } catch (_) {}
+                try { node.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true })); } catch (_) {}
+                try { node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true })); } catch (_) {}
+                try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (_) {}
+                try {
+                  node.click();
+                  if (debugTag) pushDebug(debugTag);
+                  return true;
+                } catch (_) {}
+                return false;
+              }
+
               function pickBestClickableInside(node) {
                 if (!node || !node.querySelectorAll) return clickableAncestor(node);
                 const candidates = Array.from(node.querySelectorAll('a[href],button,[role="button"],[onclick],[tabindex]'));
@@ -655,7 +670,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 }
                 if (best && best.target) {
                   try {
-                    best.target.click();
+                    forceClick(best.target, 'project-force-click');
                     pushDebug('project-opened:' + best.selector + ':score=' + best.score + ':' + String(best.text || '').slice(0, 64));
                     return true;
                   } catch (_) {}
@@ -692,10 +707,25 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     const target = pickBestClickableInside(node);
                     if (!target || !isVisible(target)) continue;
                     try {
-                      target.click();
+                      forceClick(target, 'conversation-force-click');
                       pushDebug('conversation-opened:' + selector + ':' + (text || label || href).slice(0, 64));
                       return true;
                     } catch (_) {}
+                  }
+                }
+                return false;
+              }
+
+              function clickConversationsTab() {
+                const selectors = ['button', 'a', '[role="button"]', '[role="tab"]'];
+                for (const selector of selectors) {
+                  const nodes = queryAllDeep(selector);
+                  for (const node of nodes) {
+                    if (!isVisible(node)) continue;
+                    const text = normText(node.innerText || node.textContent || '');
+                    const label = normText(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
+                    if (!(text === 'conversations' || label === 'conversations' || text.includes('conversations'))) continue;
+                    if (forceClick(node, 'conversations-tab-clicked')) return true;
                   }
                 }
                 return false;
@@ -718,7 +748,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     const text = normText(node.innerText || node.textContent || '');
                     if (!(label.includes('open menu') || text.includes('open menu') || text === 'menu')) continue;
                     try {
-                      node.click();
+                      forceClick(node, 'menu-force-click');
                       pushDebug('menu-opened:' + selector);
                       return true;
                     } catch (_) {}
@@ -728,6 +758,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               }
 
               if (isProjectPicker) {
+                if (clickConversationsTab()) return true;
                 if (clickProjectEntry()) return true;
                 if (clickOpenMenuButton()) return true;
                 pushDebug('project-picker-no-hit');
