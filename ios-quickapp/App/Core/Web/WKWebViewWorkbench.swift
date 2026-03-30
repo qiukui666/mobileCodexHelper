@@ -544,6 +544,18 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               const isProjectPicker = pageText.includes('choose your project')
                 || pageText.includes('select a project from the sidebar')
                 || pageText.includes('projects conversations');
+              const projectNameMatch = pageText.match(/([a-z0-9._-]+)\\s+\\d+\\s+sessions/);
+              const projectNameHint = projectNameMatch ? projectNameMatch[1] : '';
+
+              function hasProjectSignal(text, label, href) {
+                if (text.includes(' sessions')) return true;
+                if (text.includes(' session')) return true;
+                if (projectNameHint && (text.includes(projectNameHint) || label.includes(projectNameHint) || href.includes(projectNameHint))) {
+                  return true;
+                }
+                if (href.includes('/session/') || href.includes('/workspace/')) return true;
+                return false;
+              }
 
               function clickProjectEntry() {
                 const selectors = [
@@ -565,14 +577,17 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   const nodes = queryAllDeep(selector);
                   for (const node of nodes) {
                     if (!isVisible(node)) continue;
+                    const label = normText(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
                     const text = normText(node.innerText || node.textContent || '');
                     const href = normText(node.getAttribute && node.getAttribute('href') || '');
-                    if (!text && !href) continue;
+                    if (!text && !label && !href) continue;
                     if (text === 'projects' || text === 'conversations') continue;
+                    if (label === 'projects' || label === 'conversations') continue;
                     if (text.includes('choose your project') || text.includes('select a project')) continue;
+                    if (!hasProjectSignal(text, label, href)) continue;
                     try {
                       node.click();
-                      pushDebug('project-opened:' + selector + ':' + text.slice(0, 48));
+                      pushDebug('project-opened:' + selector + ':' + (text || label || href).slice(0, 64));
                       return true;
                     } catch (_) {}
                   }
@@ -621,7 +636,9 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   const label = normText(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
                   const text = normText(node.innerText || node.textContent || '');
                   const href = normText(node.getAttribute && node.getAttribute('href') || '');
+                  if (!text && !label && !href) continue;
                   if (text === 'projects' || text === 'conversations') continue;
+                  if (label === 'projects' || label === 'conversations') continue;
                   const matches = openPhrases.some((p) => label.includes(p) || text.includes(p))
                     || href.includes('/session/')
                     || href.includes('/workspace/')
@@ -630,7 +647,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   try {
                     node.click();
                     clicked.add(node);
-                    pushDebug('nav-opened:' + selector + ':' + text.slice(0, 48));
+                    pushDebug('nav-opened:' + selector + ':' + (text || label || href).slice(0, 64));
                     return true;
                   } catch (_) {}
                 }
