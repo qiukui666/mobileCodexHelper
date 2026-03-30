@@ -168,13 +168,13 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
             let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
             let debug = (dict["debug"] as? String) ?? ""
-            let shouldRecover = retryCount < 2 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened"))
+            let shouldRecover = retryCount < 2 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened"))
             if shouldRecover {
-                let shouldReload = !debug.contains("nav-opened")
+                let shouldReload = !(debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened"))
                 if shouldReload {
                     self.webView.reload()
                 }
-                let delay: TimeInterval = debug.contains("nav-opened") ? 2.0 : 1.4
+                let delay: TimeInterval = (debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened")) ? 2.0 : 1.4
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self else { return }
                     self.executeDispatch(command: command, retryCount: retryCount + 1, completion: completion)
@@ -568,10 +568,13 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
               function clickProjectEntry() {
                 const selectors = [
-                  '*',
                   '[data-testid*="project-item"]',
                   '[data-testid*="project"] a',
                   '[data-testid*="project"] [role="button"]',
+                  '[data-testid*="sidebar"] a',
+                  '[data-testid*="sidebar"] [role="button"]',
+                  '[aria-label*="project"] a',
+                  '[aria-label*="project"] [role="button"]',
                   '.project-item',
                   '.project-row',
                   'aside a',
@@ -608,8 +611,37 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 return false;
               }
 
+              function clickOpenMenuButton() {
+                const selectors = [
+                  'button[aria-label*="Open menu"]',
+                  'button[aria-label*="open menu"]',
+                  'button[title*="Open menu"]',
+                  'button[title*="open menu"]',
+                  '[data-testid*="menu"] button',
+                  'button'
+                ];
+                for (const selector of selectors) {
+                  const nodes = queryAllDeep(selector);
+                  for (const node of nodes) {
+                    if (!isVisible(node)) continue;
+                    const label = normText(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
+                    const text = normText(node.innerText || node.textContent || '');
+                    if (!(label.includes('open menu') || text.includes('open menu') || text === 'menu')) continue;
+                    try {
+                      node.click();
+                      pushDebug('menu-opened:' + selector);
+                      return true;
+                    } catch (_) {}
+                  }
+                }
+                return false;
+              }
+
               if (isProjectPicker) {
                 if (clickProjectEntry()) return true;
+                if (clickOpenMenuButton()) return true;
+                pushDebug('project-picker-no-hit');
+                return false;
               }
 
               const openPhrases = [
@@ -653,6 +685,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   if (text === 'projects' || text === 'conversations') continue;
                   if (label === 'projects' || label === 'conversations') continue;
                   if (text.includes('open menu') || label.includes('open menu')) continue;
+                  if (text.includes('choose your project') || text.includes('select a project from the sidebar')) continue;
                   const matches = openPhrases.some((p) => label.includes(p) || text.includes(p))
                     || href.includes('/session/')
                     || href.includes('/workspace/')
