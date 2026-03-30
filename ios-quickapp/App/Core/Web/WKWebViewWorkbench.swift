@@ -199,11 +199,28 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
         (function() {
             const command = '\(safeCommand)';
             const debug = [];
+            const startedAt = Date.now();
+            const scanBudgetMs = 1400;
+            const maxRoots = 16;
+            const maxHostNodesPerRoot = 1500;
+            const maxNodesPerSelector = 800;
+            let budgetTagged = false;
+            let cachedRoots = null;
+            let cachedRootsAt = 0;
             try { debug.push('href:' + String(window.location && window.location.href || '')); } catch (_) {}
             try { debug.push('ready:' + String(document.readyState || '')); } catch (_) {}
 
             function pushDebug(v) {
               try { debug.push(String(v)); } catch (_) {}
+            }
+
+            function budgetExceeded() {
+              const exceeded = (Date.now() - startedAt) > scanBudgetMs;
+              if (exceeded && !budgetTagged) {
+                budgetTagged = true;
+                pushDebug('scan-budget-exceeded');
+              }
+              return exceeded;
             }
 
             function getReactProps(node) {
@@ -263,28 +280,39 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             }
 
             function collectRoots() {
+              if (cachedRoots && (Date.now() - cachedRootsAt) < 900) {
+                return cachedRoots;
+              }
               const roots = [];
               const seen = new Set();
 
               function pushRoot(root) {
                 if (!root || seen.has(root)) return;
+                if (roots.length >= maxRoots) return;
                 seen.add(root);
                 roots.push(root);
               }
 
               function walk(root) {
+                if (budgetExceeded()) return;
                 pushRoot(root);
                 if (!root || !root.querySelectorAll) return;
 
-                const hosts = Array.from(root.querySelectorAll('*'));
-                for (const host of hosts) {
+                let hosts = [];
+                try { hosts = Array.from(root.querySelectorAll('*')); } catch (_) {}
+                const hostLimit = Math.min(hosts.length, maxHostNodesPerRoot);
+                for (let i = 0; i < hostLimit; i++) {
+                  if (budgetExceeded()) break;
+                  const host = hosts[i];
                   if (host && host.shadowRoot) {
                     walk(host.shadowRoot);
                   }
                 }
 
-                const frames = Array.from(root.querySelectorAll('iframe, frame'));
+                let frames = [];
+                try { frames = Array.from(root.querySelectorAll('iframe, frame')); } catch (_) {}
                 for (const frame of frames) {
+                  if (budgetExceeded()) break;
                   try {
                     if (frame.contentDocument) walk(frame.contentDocument);
                   } catch (_) {}
@@ -292,10 +320,13 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               }
 
               walk(document);
-              return roots;
+              cachedRoots = roots;
+              cachedRootsAt = Date.now();
+              return cachedRoots;
             }
 
             function queryAllDeep(selector, extraRoots) {
+              if (budgetExceeded()) return [];
               const roots = collectRoots();
               if (Array.isArray(extraRoots)) {
                 for (const r of extraRoots) {
@@ -305,13 +336,19 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               const out = [];
               const seen = new Set();
               for (const root of roots) {
+                if (budgetExceeded()) break;
                 if (!root || !root.querySelectorAll) continue;
                 let nodes = [];
                 try { nodes = Array.from(root.querySelectorAll(selector)); } catch (_) {}
                 for (const node of nodes) {
+                  if (budgetExceeded()) break;
                   if (!seen.has(node)) {
                     seen.add(node);
                     out.push(node);
+                    if (out.length >= maxNodesPerSelector) {
+                      pushDebug('selector-cap:' + selector + ':' + out.length);
+                      return out;
+                    }
                   }
                 }
               }
@@ -338,9 +375,11 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 '[contenteditable="true"]'
               ];
               for (const selector of selectors) {
+                if (budgetExceeded()) break;
                 const nodes = queryAllDeep(selector);
                 pushDebug('input-candidates:' + selector + ':' + nodes.length);
                 for (const node of nodes) {
+                  if (budgetExceeded()) break;
                   if (isVisible(node)) {
                     pushDebug('input-selector:' + selector);
                     return node;
