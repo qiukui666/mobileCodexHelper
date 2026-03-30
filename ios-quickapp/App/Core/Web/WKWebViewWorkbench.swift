@@ -257,6 +257,62 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               return true;
             }
 
+            function collectRoots() {
+              const roots = [];
+              const seen = new Set();
+
+              function pushRoot(root) {
+                if (!root || seen.has(root)) return;
+                seen.add(root);
+                roots.push(root);
+              }
+
+              function walk(root) {
+                pushRoot(root);
+                if (!root || !root.querySelectorAll) return;
+
+                const hosts = Array.from(root.querySelectorAll('*'));
+                for (const host of hosts) {
+                  if (host && host.shadowRoot) {
+                    walk(host.shadowRoot);
+                  }
+                }
+
+                const frames = Array.from(root.querySelectorAll('iframe, frame'));
+                for (const frame of frames) {
+                  try {
+                    if (frame.contentDocument) walk(frame.contentDocument);
+                  } catch (_) {}
+                }
+              }
+
+              walk(document);
+              return roots;
+            }
+
+            function queryAllDeep(selector, extraRoots) {
+              const roots = collectRoots();
+              if (Array.isArray(extraRoots)) {
+                for (const r of extraRoots) {
+                  if (r && !roots.includes(r)) roots.unshift(r);
+                }
+              }
+              const out = [];
+              const seen = new Set();
+              for (const root of roots) {
+                if (!root || !root.querySelectorAll) continue;
+                let nodes = [];
+                try { nodes = Array.from(root.querySelectorAll(selector)); } catch (_) {}
+                for (const node of nodes) {
+                  if (!seen.has(node)) {
+                    seen.add(node);
+                    out.push(node);
+                  }
+                }
+              }
+              return out;
+            }
+
             function findInput() {
               const selectors = [
                 'textarea.chat-input-placeholder',
@@ -265,12 +321,20 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 'textarea[placeholder*="Enter"]',
                 'textarea[placeholder*="输入"]',
                 'textarea[placeholder*="message"]',
+                '[data-testid*="composer"] [contenteditable="true"]',
+                '[data-testid*="chat"] [contenteditable="true"]',
+                '.ProseMirror',
+                '[data-lexical-editor="true"]',
+                '[data-slate-editor="true"]',
                 'textarea',
+                'div[role="textbox"]',
                 '[contenteditable="true"][role="textbox"]',
-                '[role="textbox"][contenteditable="true"]'
+                '[role="textbox"][contenteditable="true"]',
+                '[contenteditable="true"]'
               ];
               for (const selector of selectors) {
-                const nodes = Array.from(document.querySelectorAll(selector));
+                const nodes = queryAllDeep(selector);
+                pushDebug('input-candidates:' + selector + ':' + nodes.length);
                 for (const node of nodes) {
                   if (isVisible(node)) {
                     pushDebug('input-selector:' + selector);
@@ -341,6 +405,18 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 }
                 cur = cur.parentElement;
               }
+              try {
+                const rootNode = input.getRootNode ? input.getRootNode() : null;
+                if (rootNode && rootNode.host) {
+                  let host = rootNode.host;
+                  while (host) {
+                    if (host.querySelector && host.querySelector('button[type="submit"],button[aria-label*="Send"],button[aria-label*="发送"],button[data-testid*="send"]')) {
+                      return host;
+                    }
+                    host = host.parentElement;
+                  }
+                }
+              } catch (_) {}
               return null;
             }
 
@@ -380,23 +456,25 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               const roots = [];
               if (form) roots.push(form);
               if (input && input.parentElement) roots.push(input.parentElement);
-              roots.push(document);
               const selectors = [
                 'button[type="submit"]',
                 'button[aria-label*="Send"]',
+                'button[aria-label*="send"]',
+                'button[aria-label*="Reply"]',
                 'button[aria-label*="发送"]',
-                'button[data-testid*="send"]'
+                'button[data-testid*="send"]',
+                '[data-testid*="send"] button',
+                '[data-testid*="composer"] button',
+                '[data-testid*="chat"] button'
               ];
               const out = [];
               const seen = new Set();
-              for (const root of roots) {
-                for (const selector of selectors) {
-                  const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll(selector)) : [];
-                  for (const node of nodes) {
-                    if (!seen.has(node) && isVisible(node)) {
-                      seen.add(node);
-                      out.push(node);
-                    }
+              for (const selector of selectors) {
+                const nodes = queryAllDeep(selector, roots);
+                for (const node of nodes) {
+                  if (!seen.has(node) && isVisible(node)) {
+                    seen.add(node);
+                    out.push(node);
                   }
                 }
               }
@@ -459,10 +537,16 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             pushDebug('btn-count:' + buttons.length);
             const clicked = valueSet ? tryClickSendButtons(buttons, input) : false;
             const sent = clicked || submitted;
+            const hasPasswordField = queryAllDeep('input[type="password"]').length > 0;
+            const reason = sent
+              ? "已触发提交动作"
+              : (hasPasswordField
+                  ? "未检测到聊天输入框（页面可能在登录态）"
+                  : "未触发提交（可能输入未进入React状态或按钮仍禁用）");
 
             return {
               sent: sent,
-              reason: sent ? "已触发提交动作" : "未触发提交（可能输入未进入React状态或按钮仍禁用）",
+              reason: reason,
               clicked: clicked,
               submitted: submitted,
               debug: debug.join(',')
