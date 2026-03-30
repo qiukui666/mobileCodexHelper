@@ -584,14 +584,26 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               function pickBestClickableInside(node) {
                 if (!node || !node.querySelectorAll) return clickableAncestor(node);
                 const candidates = Array.from(node.querySelectorAll('a[href],button,[role="button"],[onclick],[tabindex]'));
+                let best = null;
+                let bestScore = -1;
                 for (const c of candidates) {
                   if (!isVisible(c)) continue;
                   const t = normText(c.innerText || c.textContent || '');
                   const href = normText(c.getAttribute && c.getAttribute('href') || '');
                   if (t.includes('open menu')) continue;
-                  if (href.includes('/session/') || href.includes('/workspace/') || t.includes('session') || t.includes('chat') || t.includes('conversation')) {
-                    return c;
+                  let score = 0;
+                  if (href.includes('/session/') || href.includes('/workspace/')) score += 90;
+                  if (t.includes('session') || t.includes('chat') || t.includes('conversation')) score += 30;
+                  if ((c.tagName || '').toLowerCase() === 'a') score += 15;
+                  if ((c.tagName || '').toLowerCase() === 'button') score += 10;
+                  if ((c.tagName || '').toLowerCase() === 'div') score -= 15;
+                  if (score > bestScore) {
+                    bestScore = score;
+                    best = c;
                   }
+                }
+                if (best) {
+                  return best;
                 }
                 return clickableAncestor(node);
               }
@@ -632,7 +644,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   if (selector.indexOf('project') >= 0) score += 20;
                   if (selector === 'a' || selector.indexOf(' a') >= 0) score += 15;
                   if (selector === 'button' || selector.indexOf('button') >= 0) score += 10;
-                  if (selector === 'div' || selector === 'li') score -= 20;
+                  if (selector === 'div' || selector === 'li') score -= 40;
                   if (text.includes('projects') || text.includes('conversations')) score -= 80;
                   if (text.includes('choose your project') || text.includes('select a project')) score -= 80;
                   if (text.includes('open menu') || label.includes('open menu')) score -= 120;
@@ -656,6 +668,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     if (!hasProjectSignal(text, label, href)) continue;
                     const isBroadSelector = (selector === 'div' || selector === 'li' || selector === '[role="button"]');
                     if (isBroadSelector && !href && text.length > 120) continue;
+                    if ((selector === 'div' || selector === 'li') && !href && !projectNameHint) continue;
                     const target = pickBestClickableInside(node);
                     if (!target || !isVisible(target)) continue;
                     const targetText = normText(target.innerText || target.textContent || '');
@@ -784,9 +797,15 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               }
 
               if (isProjectPicker) {
-                let progressed = clickConversationsTab();
-                if (clickProjectEntry()) return true;
-                if (clickOpenMenuButton()) return true;
+                let progressed = false;
+                if (clickConversationsTab()) progressed = true;
+                if (clickProjectEntry()) progressed = true;
+                if (clickConversationEntry()) return true;
+                if (clickOpenMenuButton()) {
+                  progressed = true;
+                  if (clickProjectEntry()) progressed = true;
+                  if (clickConversationEntry()) return true;
+                }
                 if (progressed) {
                   pushDebug('project-picker-progress');
                   return true;
