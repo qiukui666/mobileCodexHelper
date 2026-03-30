@@ -252,14 +252,13 @@ final class QuickAppViewModel: ObservableObject {
 
     private func ensureWorkbenchLoadedForSend() {
         let targetText = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let targetURL = URL(string: targetText) else { return }
-        guard let current = webView.url else {
+        guard let targetURL = URL(string: targetText), let targetHost = targetURL.host else { return }
+        guard let current = webView.url, let currentHost = current.host else {
             webWorkbench.load(url: targetURL)
             return
         }
-        let currentText = current.absoluteString
-        let targetFull = targetURL.absoluteString
-        if currentText != targetFull {
+        let currentText = current.absoluteString.lowercased()
+        if currentText == "about:blank" || currentHost != targetHost {
             webWorkbench.load(url: targetURL)
         }
     }

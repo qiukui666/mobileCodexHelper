@@ -168,9 +168,12 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
             let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
             let debug = (dict["debug"] as? String) ?? ""
-            let shouldRecover = !recoveredOnce && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0"))
+            let shouldRecover = !recoveredOnce && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened"))
             if shouldRecover {
-                self.webView.load(URLRequest(url: self.config.defaultWorkbenchURL))
+                let shouldReload = !debug.contains("nav-opened")
+                if shouldReload {
+                    self.webView.reload()
+                }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
                     guard let self else { return }
                     self.executeDispatch(command: command, recoveredOnce: true, completion: completion)
@@ -521,6 +524,46 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               return clicked;
             }
 
+            function normText(s) {
+              return String(s || '').trim().toLowerCase();
+            }
+
+            function maybeOpenConversation() {
+              const openPhrases = [
+                'new chat', 'new session', 'new conversation',
+                'chat', 'session',
+                '新建会话', '新对话', '会话', '聊天'
+              ];
+              const selectors = [
+                'a[href*="/session/"]',
+                'button[data-testid*="new"]',
+                'button[data-testid*="chat"]',
+                '[role="button"]',
+                'a',
+                'button'
+              ];
+              const clicked = new Set();
+              for (const selector of selectors) {
+                const nodes = queryAllDeep(selector);
+                for (const node of nodes) {
+                  if (!isVisible(node) || clicked.has(node)) continue;
+                  const label = normText(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
+                  const text = normText(node.innerText || node.textContent || '');
+                  const href = normText(node.getAttribute && node.getAttribute('href') || '');
+                  const matches = openPhrases.some((p) => label.includes(p) || text.includes(p))
+                    || href.includes('/session/');
+                  if (!matches) continue;
+                  try {
+                    node.click();
+                    clicked.add(node);
+                    pushDebug('nav-opened:' + selector);
+                    return true;
+                  } catch (_) {}
+                }
+              }
+              return false;
+            }
+
             try {
                 window.dispatchEvent(new CustomEvent('mobilecodex:command', {
                     detail: { command: command, source: 'ios-quickapp' }
@@ -537,12 +580,15 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             pushDebug('btn-count:' + buttons.length);
             const clicked = valueSet ? tryClickSendButtons(buttons, input) : false;
             const sent = clicked || submitted;
+            const openedConversation = (!sent && !input) ? maybeOpenConversation() : false;
             const hasPasswordField = queryAllDeep('input[type="password"]').length > 0;
             const reason = sent
               ? "已触发提交动作"
+              : (openedConversation
+                  ? "未找到输入框，已尝试自动打开会话"
               : (hasPasswordField
                   ? "未检测到聊天输入框（页面可能在登录态）"
-                  : "未触发提交（可能输入未进入React状态或按钮仍禁用）");
+                  : "未触发提交（可能输入未进入React状态或按钮仍禁用）"));
 
             return {
               sent: sent,
@@ -597,9 +643,19 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
           function assistantNodes() {
             const selectors = [
               '.chat-message.assistant',
+              '.chat-turn.assistant',
+              '.message.assistant',
+              '.assistant-message',
+              '[class*="assistant-message"]',
               '[data-role="assistant"]',
+              '[data-author="assistant"]',
+              '[data-role="assistant-message"]',
               '[data-message-author-role="assistant"]',
+              '[data-testid="assistant-message"]',
+              '[data-testid*="assistant-message"]',
+              'article[data-testid="assistant"]',
               'article[data-testid*="assistant"]',
+              '[aria-label*="assistant"]',
               '.assistant'
             ];
             const out = [];
@@ -619,7 +675,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
           function extractAssistantTexts() {
             const nodes = assistantNodes();
             return nodes.map((el) => {
-              const body = el.querySelector('.prose, .markdown, .whitespace-pre-wrap') || el;
+              const body = el.querySelector('.prose, .markdown, .message-content, .chat-message-content, [data-testid*="message-content"], .whitespace-pre-wrap, pre, p') || el;
               return body && body.innerText ? body.innerText.trim() : '';
             }).filter(Boolean);
           }
@@ -667,9 +723,19 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
           const selectors = [
             '.chat-message.assistant',
+            '.chat-turn.assistant',
+            '.message.assistant',
+            '.assistant-message',
+            '[class*="assistant-message"]',
             '[data-role="assistant"]',
+            '[data-author="assistant"]',
+            '[data-role="assistant-message"]',
             '[data-message-author-role="assistant"]',
+            '[data-testid="assistant-message"]',
+            '[data-testid*="assistant-message"]',
+            'article[data-testid="assistant"]',
             'article[data-testid*="assistant"]',
+            '[aria-label*="assistant"]',
             '.assistant'
           ];
           const nodes = [];
@@ -683,7 +749,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             });
           }
           for (let i = nodes.length - 1; i >= 0; i--) {
-            const body = nodes[i].querySelector('.prose, .markdown, .whitespace-pre-wrap') || nodes[i];
+            const body = nodes[i].querySelector('.prose, .markdown, .message-content, .chat-message-content, [data-testid*="message-content"], .whitespace-pre-wrap, pre, p') || nodes[i];
             const t = textOf(body);
             if (t) return t;
           }
