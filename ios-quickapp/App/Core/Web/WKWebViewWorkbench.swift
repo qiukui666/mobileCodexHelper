@@ -178,109 +178,270 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
         return """
         (function() {
             const command = '\(safeCommand)';
+            const debug = [];
+
+            function pushDebug(v) {
+              try { debug.push(String(v)); } catch (_) {}
+            }
+
+            function getReactProps(node) {
+              if (!node) return null;
+              try {
+                const key = Object.keys(node).find((k) => k.indexOf('__reactProps$') === 0);
+                if (key && node[key]) return node[key];
+              } catch (_) {}
+              return null;
+            }
+
+            function getReactFiber(node) {
+              if (!node) return null;
+              try {
+                const key = Object.keys(node).find((k) => k.indexOf('__reactFiber$') === 0);
+                if (key && node[key]) return node[key];
+              } catch (_) {}
+              return null;
+            }
+
+            function callReactHandler(node, names, eventObj) {
+              const seen = new Set();
+              let cur = node;
+              while (cur && !seen.has(cur)) {
+                seen.add(cur);
+                const props = getReactProps(cur);
+                if (props) {
+                  for (const name of names) {
+                    if (typeof props[name] === 'function') {
+                      try {
+                        props[name](eventObj);
+                        pushDebug('react-' + name);
+                        return true;
+                      } catch (_) {
+                        pushDebug('react-' + name + '-err');
+                      }
+                    }
+                  }
+                }
+                const fiber = getReactFiber(cur);
+                if (fiber && fiber.return && fiber.return.stateNode && fiber.return.stateNode !== cur) {
+                  cur = fiber.return.stateNode;
+                } else {
+                  cur = cur.parentElement;
+                }
+              }
+              return false;
+            }
+
+            function isVisible(el) {
+              if (!el) return false;
+              const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+              if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+              const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+              if (rect && rect.width === 0 && rect.height === 0) return false;
+              return true;
+            }
+
+            function findInput() {
+              const selectors = [
+                'textarea.chat-input-placeholder',
+                'form textarea.chat-input-placeholder',
+                'textarea[data-testid*="chat"]',
+                'textarea[placeholder*="Enter"]',
+                'textarea[placeholder*="输入"]',
+                'textarea[placeholder*="message"]',
+                'textarea',
+                '[contenteditable="true"][role="textbox"]',
+                '[role="textbox"][contenteditable="true"]'
+              ];
+              for (const selector of selectors) {
+                const nodes = Array.from(document.querySelectorAll(selector));
+                for (const node of nodes) {
+                  if (isVisible(node)) {
+                    pushDebug('input-selector:' + selector);
+                    return node;
+                  }
+                }
+              }
+              return null;
+            }
+
+            function setInputValue(input, value) {
+              if (!input) return false;
+              try { if (input.focus) input.focus(); } catch (_) {}
+
+              const isTextInput = input.tagName === 'TEXTAREA' || input.tagName === 'INPUT';
+              if (isTextInput) {
+                try {
+                  const proto = input.tagName === 'TEXTAREA'
+                    ? window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype
+                    : window.HTMLInputElement && window.HTMLInputElement.prototype;
+                  const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, 'value') : null;
+                  const setter = descriptor ? descriptor.set : null;
+                  if (setter) {
+                    setter.call(input, value);
+                    pushDebug('value-setter');
+                  } else {
+                    input.value = value;
+                    pushDebug('value-direct');
+                  }
+                } catch (_) {
+                  input.value = value;
+                  pushDebug('value-fallback');
+                }
+
+                try {
+                  if (input._valueTracker && typeof input._valueTracker.setValue === 'function') {
+                    input._valueTracker.setValue('');
+                    pushDebug('value-tracker');
+                  }
+                } catch (_) {}
+              } else {
+                input.textContent = value;
+                pushDebug('contenteditable-set');
+              }
+
+              try {
+                input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+                pushDebug('input-event');
+              } catch (_) {}
+              try {
+                input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                pushDebug('change-event');
+              } catch (_) {}
+              callReactHandler(input, ['onChange', 'onInput'], { target: input, currentTarget: input, type: 'change' });
+              return true;
+            }
+
+            function findFormForInput(input) {
+              if (!input) return null;
+              if (input.closest) {
+                const form = input.closest('form');
+                if (form) return form;
+              }
+              let cur = input.parentElement;
+              while (cur) {
+                if (cur.querySelector && cur.querySelector('button[type="submit"],button[aria-label*="Send"],button[aria-label*="发送"]')) {
+                  return cur;
+                }
+                cur = cur.parentElement;
+              }
+              return null;
+            }
+
+            function trySubmitWithForm(form) {
+              if (!form) return false;
+              let ok = false;
+              const submitter = form.querySelector ? form.querySelector('button[type="submit"],button:not([disabled])') : null;
+              try {
+                const evt = new Event('submit', { bubbles: true, cancelable: true });
+                ok = form.dispatchEvent(evt) || ok;
+                pushDebug('form-submit-event');
+              } catch (_) {}
+
+              if (typeof form.requestSubmit === 'function') {
+                try {
+                  form.requestSubmit(submitter || undefined);
+                  ok = true;
+                  pushDebug('form-requestSubmit');
+                } catch (_) {}
+              }
+              if (!ok && typeof form.submit === 'function') {
+                try {
+                  form.submit();
+                  ok = true;
+                  pushDebug('form-submit');
+                } catch (_) {}
+              }
+              const reactOk = callReactHandler(
+                form,
+                ['onSubmit'],
+                { target: form, currentTarget: form, type: 'submit', preventDefault: function() {}, stopPropagation: function() {} }
+              );
+              return ok || reactOk;
+            }
+
+            function findSendButtons(form, input) {
+              const roots = [];
+              if (form) roots.push(form);
+              if (input && input.parentElement) roots.push(input.parentElement);
+              roots.push(document);
+              const selectors = [
+                'button[type="submit"]',
+                'button[aria-label*="Send"]',
+                'button[aria-label*="发送"]',
+                'button[data-testid*="send"]'
+              ];
+              const out = [];
+              const seen = new Set();
+              for (const root of roots) {
+                for (const selector of selectors) {
+                  const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll(selector)) : [];
+                  for (const node of nodes) {
+                    if (!seen.has(node) && isVisible(node)) {
+                      seen.add(node);
+                      out.push(node);
+                    }
+                  }
+                }
+              }
+              return out;
+            }
+
+            function tryClickSendButtons(buttons, input) {
+              let clicked = false;
+              for (const button of buttons) {
+                if (button.disabled) {
+                  pushDebug('btn-disabled');
+                  continue;
+                }
+                try { button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); } catch (_) {}
+                try { button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true })); } catch (_) {}
+                try { button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (_) {}
+                try {
+                  button.click();
+                  clicked = true;
+                  pushDebug('btn-click');
+                } catch (_) {}
+                const reactOk = callReactHandler(
+                  button,
+                  ['onClick'],
+                  { target: button, currentTarget: button, type: 'click', preventDefault: function() {}, stopPropagation: function() {} }
+                );
+                clicked = clicked || reactOk;
+                if (clicked) break;
+              }
+
+              if (!clicked && input) {
+                try {
+                  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+                  input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+                  pushDebug('enter-dispatch');
+                } catch (_) {}
+                const keyOk = callReactHandler(
+                  input,
+                  ['onKeyDown', 'onKeyPress'],
+                  { key: 'Enter', code: 'Enter', which: 13, keyCode: 13, bubbles: true, cancelable: true, shiftKey: false }
+                );
+                clicked = clicked || keyOk;
+              }
+              return clicked;
+            }
+
             try {
                 window.dispatchEvent(new CustomEvent('mobilecodex:command', {
                     detail: { command: command, source: 'ios-quickapp' }
                 }));
             } catch (_) {}
 
-            // Target claudecodeui composer specifically to avoid hitting unrelated inputs.
-            const inputSelectors = [
-                'textarea.chat-input-placeholder',
-                'form textarea.chat-input-placeholder',
-                'textarea[placeholder*="Enter"]',
-                'textarea[placeholder*="输入"]'
-            ];
-            var input = null;
-            for (const selector of inputSelectors) {
-                const target = document.querySelector(selector);
-                if (target) {
-                    input = target;
-                    break;
-                }
-            }
-
-            var sent = false;
-            var clicked = false;
-            var submitted = false;
-            var debug = [];
-
-            if (input) {
-                debug.push('input-found');
-                if ('value' in input) {
-                    try {
-                        const setter =
-                          Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype, 'value')?.set
-                          || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value')?.set;
-                        if (setter) {
-                            setter.call(input, command);
-                            debug.push('value-setter');
-                        } else {
-                            input.value = command;
-                            debug.push('value-direct');
-                        }
-                    } catch (_) {
-                        input.value = command;
-                        debug.push('value-fallback');
-                    }
-                } else {
-                    input.textContent = command;
-                    debug.push('contenteditable-set');
-                }
-                if (input.focus) { input.focus(); }
-                try {
-                  if (input._valueTracker && typeof input._valueTracker.setValue === 'function') {
-                    input._valueTracker.setValue('');
-                    debug.push('react-value-tracker');
-                  }
-                } catch (_) {}
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-
-                // Try invoking React handlers directly when available.
-                try {
-                  const reactPropsKey = Object.keys(input).find((k) => k.startsWith('__reactProps$'));
-                  if (reactPropsKey && input[reactPropsKey]?.onChange) {
-                    input[reactPropsKey].onChange({ target: input, currentTarget: input, type: 'change' });
-                    debug.push('react-onchange-called');
-                  }
-                } catch (_) {}
-
-                input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-                input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true }));
-                input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
-                const form = input.closest ? input.closest('form') : null;
-                if (form && typeof form.requestSubmit === 'function') {
-                    form.requestSubmit();
-                    submitted = true;
-                    debug.push('form-requestSubmit');
-                } else if (form && typeof form.submit === 'function') {
-                    form.submit();
-                    submitted = true;
-                    debug.push('form-submit');
-                }
-            }
-
-            const targetForm = input && input.closest ? input.closest('form') : null;
-            const sendSelectors = ['button[type="submit"]'];
-            for (const selector of sendSelectors) {
-                const button = targetForm ? targetForm.querySelector(selector) : document.querySelector(selector);
-                if (button) {
-                    if (button.disabled) {
-                        debug.push('button-disabled');
-                        continue;
-                    }
-                    try { button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); } catch (_) {}
-                    try { button.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true })); } catch (_) {}
-                    try { button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true })); } catch (_) {}
-                    button.click();
-                    clicked = true;
-                    debug.push('button-clicked');
-                    break;
-                }
-            }
-
-            sent = clicked || submitted;
+            const input = findInput();
+            if (!input) pushDebug('input-not-found');
+            const valueSet = setInputValue(input, command);
+            const form = findFormForInput(input);
+            pushDebug(form ? 'form-found' : 'form-not-found');
+            const submitted = valueSet ? trySubmitWithForm(form) : false;
+            const buttons = findSendButtons(form, input);
+            pushDebug('btn-count:' + buttons.length);
+            const clicked = valueSet ? tryClickSendButtons(buttons, input) : false;
+            const sent = clicked || submitted;
 
             return {
               sent: sent,
