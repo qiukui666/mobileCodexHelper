@@ -574,6 +574,15 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 try { node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true })); } catch (_) {}
                 try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (_) {}
                 try {
+                  callReactHandler(
+                    node,
+                    ['onClick', 'onMouseDown', 'onPointerDown'],
+                    { target: node, currentTarget: node, type: 'click', preventDefault: function() {}, stopPropagation: function() {} }
+                  );
+                } catch (_) {}
+                try {
+                  node.click();
+                  // Some list rows require a second activation to expand/open.
                   node.click();
                   if (debugTag) pushDebug(debugTag);
                   return true;
@@ -684,7 +693,8 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 if (best && best.target) {
                   try {
                     forceClick(best.target, 'project-force-click');
-                    pushDebug('project-opened:' + best.selector + ':score=' + best.score + ':' + String(best.text || '').slice(0, 64));
+                    const tag = normText(best.target.tagName || '');
+                    pushDebug('project-opened:' + best.selector + ':tag=' + tag + ':score=' + best.score + ':' + String(best.text || '').slice(0, 64));
                     return true;
                   } catch (_) {}
                 }
@@ -710,7 +720,8 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   const target = pickBestClickableInside(fallbackNode);
                   if (target && isVisible(target)) {
                     forceClick(target, 'project-text-fallback-click');
-                    pushDebug('project-opened:text-fallback:' + fallbackLen);
+                    const tag = normText(target.tagName || '');
+                    pushDebug('project-opened:text-fallback:tag=' + tag + ':len=' + fallbackLen);
                     return true;
                   }
                 }
@@ -731,6 +742,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   '[role="menuitem"] a',
                   '[role="button"]'
                 ];
+                let candidateCount = 0;
                 for (const selector of selectors) {
                   const nodes = queryAllDeep(selector);
                   for (const node of nodes) {
@@ -743,6 +755,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     if (text.includes('open menu') || label.includes('open menu')) continue;
                     const sessionLike = href.includes('/session/') || href.includes('/workspace/') || text.includes('session') || text.includes('chat') || text.includes('conversation');
                     if (!sessionLike) continue;
+                    candidateCount += 1;
                     const target = pickBestClickableInside(node);
                     if (!target || !isVisible(target)) continue;
                     try {
@@ -752,6 +765,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     } catch (_) {}
                   }
                 }
+                pushDebug('conversation-candidates:' + candidateCount);
                 return false;
               }
 
