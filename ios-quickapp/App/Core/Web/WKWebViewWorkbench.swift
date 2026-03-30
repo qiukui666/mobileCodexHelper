@@ -168,13 +168,13 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
             let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
             let debug = (dict["debug"] as? String) ?? ""
-            let shouldRecover = retryCount < 3 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened"))
+            let shouldRecover = retryCount < 3 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress"))
             if shouldRecover {
-                let shouldReload = !(debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened"))
+                let shouldReload = !(debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress"))
                 if shouldReload {
                     self.webView.reload()
                 }
-                let delay: TimeInterval = (debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened")) ? 2.0 : 1.4
+                let delay: TimeInterval = (debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress")) ? 2.0 : 1.4
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self else { return }
                     self.executeDispatch(command: command, retryCount: retryCount + 1, completion: completion)
@@ -675,6 +675,32 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                     return true;
                   } catch (_) {}
                 }
+
+                // Text fallback for rows like "openclaw 13 sessions".
+                const allNodes = queryAllDeep('*');
+                let fallbackNode = null;
+                let fallbackLen = 9999;
+                for (const node of allNodes) {
+                  if (!isVisible(node)) continue;
+                  const text = normText(node.innerText || node.textContent || '');
+                  if (!text) continue;
+                  if (!text.includes(' session')) continue;
+                  if (projectNameHint && !text.includes(projectNameHint)) continue;
+                  if (text.includes('choose your project') || text.includes('select a project')) continue;
+                  if (text.includes('projects conversations')) continue;
+                  if (text.length < fallbackLen) {
+                    fallbackLen = text.length;
+                    fallbackNode = node;
+                  }
+                }
+                if (fallbackNode) {
+                  const target = pickBestClickableInside(fallbackNode);
+                  if (target && isVisible(target)) {
+                    forceClick(target, 'project-text-fallback-click');
+                    pushDebug('project-opened:text-fallback:' + fallbackLen);
+                    return true;
+                  }
+                }
                 return false;
               }
 
@@ -758,9 +784,13 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
               }
 
               if (isProjectPicker) {
-                if (clickConversationsTab()) return true;
+                let progressed = clickConversationsTab();
                 if (clickProjectEntry()) return true;
                 if (clickOpenMenuButton()) return true;
+                if (progressed) {
+                  pushDebug('project-picker-progress');
+                  return true;
+                }
                 pushDebug('project-picker-no-hit');
                 return false;
               }
