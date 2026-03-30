@@ -168,13 +168,13 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
             let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
             let debug = (dict["debug"] as? String) ?? ""
-            let shouldRecover = retryCount < 3 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress"))
+            let shouldRecover = retryCount < 4 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress") || debug.contains("sidebar-fallback-opened"))
             if shouldRecover {
-                let shouldReload = !(debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress"))
+                let shouldReload = !(debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress") || debug.contains("sidebar-fallback-opened"))
                 if shouldReload {
                     self.webView.reload()
                 }
-                let delay: TimeInterval = (debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress")) ? 2.0 : 1.4
+                let delay: TimeInterval = (debug.contains("nav-opened") || debug.contains("menu-opened") || debug.contains("project-opened") || debug.contains("conversation-opened") || debug.contains("conversations-tab-clicked") || debug.contains("project-picker-progress") || debug.contains("sidebar-fallback-opened")) ? 2.4 : 1.4
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self else { return }
                     self.executeDispatch(command: command, retryCount: retryCount + 1, completion: completion)
@@ -573,6 +573,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 try { node.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true })); } catch (_) {}
                 try { node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true })); } catch (_) {}
                 try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (_) {}
+                try { node.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })); } catch (_) {}
                 try {
                   callReactHandler(
                     node,
@@ -584,6 +585,10 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   node.click();
                   // Some list rows require a second activation to expand/open.
                   node.click();
+                  try {
+                    node.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+                    node.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+                  } catch (_) {}
                   if (debugTag) pushDebug(debugTag);
                   return true;
                 } catch (_) {}
@@ -769,6 +774,41 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 return false;
               }
 
+              function clickSidebarFallbackItem() {
+                const selectors = [
+                  'aside [role="button"]',
+                  'aside button',
+                  'aside a',
+                  'nav [role="button"]',
+                  'nav button',
+                  'nav a',
+                  '[role="treeitem"]',
+                  '[role="listitem"]',
+                  'li'
+                ];
+                for (const selector of selectors) {
+                  const nodes = queryAllDeep(selector);
+                  for (const node of nodes) {
+                    if (!isVisible(node)) continue;
+                    const text = normText(node.innerText || node.textContent || '');
+                    const label = normText(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
+                    const href = normText(node.getAttribute && node.getAttribute('href') || '');
+                    if (!text && !label && !href) continue;
+                    if (text.includes('projects') || text.includes('conversations')) continue;
+                    if (text.includes('choose your project') || text.includes('select a project')) continue;
+                    if (text.includes('open menu') || label.includes('open menu')) continue;
+                    if (text.length > 140) continue;
+                    const target = pickBestClickableInside(node);
+                    if (!target || !isVisible(target)) continue;
+                    if (forceClick(target, 'sidebar-fallback-force-click')) {
+                      pushDebug('sidebar-fallback-opened:' + selector + ':' + (text || label || href).slice(0, 64));
+                      return true;
+                    }
+                  }
+                }
+                return false;
+              }
+
               function clickConversationsTab() {
                 const selectors = ['button', 'a', '[role="button"]', '[role="tab"]'];
                 for (const selector of selectors) {
@@ -818,6 +858,10 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                 if (clickOpenMenuButton()) {
                   progressed = true;
                   if (clickProjectEntry()) progressed = true;
+                  if (clickConversationEntry()) return true;
+                }
+                if (clickSidebarFallbackItem()) {
+                  progressed = true;
                   if (clickConversationEntry()) return true;
                 }
                 if (progressed) {
