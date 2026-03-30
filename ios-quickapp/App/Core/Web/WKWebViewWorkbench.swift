@@ -531,7 +531,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             function sampleBodyText() {
               try {
                 const t = String((document.body && (document.body.innerText || document.body.textContent)) || '');
-                const oneLine = t.replace(/\s+/g, ' ').trim();
+                const oneLine = t.replace(/\\s+/g, ' ').trim();
                 return oneLine.slice(0, 120);
               } catch (_) {
                 return '';
