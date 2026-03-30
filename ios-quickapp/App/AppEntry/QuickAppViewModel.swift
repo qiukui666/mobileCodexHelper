@@ -142,6 +142,7 @@ final class QuickAppViewModel: ObservableObject {
             lastActionMessage = "指令不能为空"
             return
         }
+        ensureWorkbenchLoadedForSend()
         messages.append(ChatMessage(role: .user, text: trimmed))
         let pendingID = UUID()
         pendingSendMessageID = pendingID
@@ -247,6 +248,18 @@ final class QuickAppViewModel: ObservableObject {
         }
 
         scheduleNext()
+    }
+
+    private func ensureWorkbenchLoadedForSend() {
+        let targetText = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let targetURL = URL(string: targetText), let targetHost = targetURL.host else { return }
+        guard let current = webView.url, let currentHost = current.host else {
+            webWorkbench.load(url: targetURL)
+            return
+        }
+        if currentHost != targetHost {
+            webWorkbench.load(url: targetURL)
+        }
     }
 
     private func shouldAppendAssistant(_ text: String) -> Bool {
