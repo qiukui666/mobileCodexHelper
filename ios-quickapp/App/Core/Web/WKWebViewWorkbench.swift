@@ -140,10 +140,10 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             )))
         }
 
-        executeDispatch(command: command, recoveredOnce: false, completion: resolve)
+        executeDispatch(command: command, retryCount: 0, completion: resolve)
     }
 
-    private func executeDispatch(command: String, recoveredOnce: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
+    private func executeDispatch(command: String, retryCount: Int, completion: @escaping (Result<Void, Error>) -> Void) {
         let script = Self.makeDispatchScript(command: command)
         webView.evaluateJavaScript(script) { [weak self] raw, error in
             guard let self else { return }
@@ -168,15 +168,16 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
 
             let reason = (dict["reason"] as? String) ?? "未找到可用输入框或发送按钮"
             let debug = (dict["debug"] as? String) ?? ""
-            let shouldRecover = !recoveredOnce && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened"))
+            let shouldRecover = retryCount < 2 && (debug.contains("input-not-found") || debug.contains("form-not-found") || debug.contains("btn-count:0") || debug.contains("nav-opened"))
             if shouldRecover {
                 let shouldReload = !debug.contains("nav-opened")
                 if shouldReload {
                     self.webView.reload()
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+                let delay: TimeInterval = debug.contains("nav-opened") ? 2.0 : 1.4
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self else { return }
-                    self.executeDispatch(command: command, recoveredOnce: true, completion: completion)
+                    self.executeDispatch(command: command, retryCount: retryCount + 1, completion: completion)
                 }
                 return
             }
@@ -539,11 +540,55 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
             }
 
             function maybeOpenConversation() {
+              const pageText = normText(sampleBodyText());
+              const isProjectPicker = pageText.includes('choose your project')
+                || pageText.includes('select a project from the sidebar')
+                || pageText.includes('projects conversations');
+
+              function clickProjectEntry() {
+                const selectors = [
+                  '[data-testid*="project-item"]',
+                  '[data-testid*="project"] a',
+                  '[data-testid*="project"] [role="button"]',
+                  '.project-item',
+                  '.project-row',
+                  'aside a',
+                  'aside [role="button"]',
+                  'nav a',
+                  'nav [role="button"]',
+                  '[role="treeitem"]',
+                  '[role="menuitem"]',
+                  'a[href*="/session/"]',
+                  'a[href*="/workspace/"]'
+                ];
+                for (const selector of selectors) {
+                  const nodes = queryAllDeep(selector);
+                  for (const node of nodes) {
+                    if (!isVisible(node)) continue;
+                    const text = normText(node.innerText || node.textContent || '');
+                    const href = normText(node.getAttribute && node.getAttribute('href') || '');
+                    if (!text && !href) continue;
+                    if (text === 'projects' || text === 'conversations') continue;
+                    if (text.includes('choose your project') || text.includes('select a project')) continue;
+                    try {
+                      node.click();
+                      pushDebug('project-opened:' + selector + ':' + text.slice(0, 48));
+                      return true;
+                    } catch (_) {}
+                  }
+                }
+                return false;
+              }
+
+              if (isProjectPicker) {
+                if (clickProjectEntry()) return true;
+              }
+
               const openPhrases = [
                 'new chat', 'new session', 'new conversation',
                 'continue', 'resume', 'open',
                 'chat', 'session',
-                'workspace', 'project',
+                'workspace',
                 '新建会话', '新对话', '会话', '聊天', '继续', '打开', '工作区', '项目'
               ];
               const selectors = [
@@ -576,6 +621,7 @@ final class WKWebViewWorkbench: NSObject, WebWorkbenchManaging, WKScriptMessageH
                   const label = normText(node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title')) || '');
                   const text = normText(node.innerText || node.textContent || '');
                   const href = normText(node.getAttribute && node.getAttribute('href') || '');
+                  if (text === 'projects' || text === 'conversations') continue;
                   const matches = openPhrases.some((p) => label.includes(p) || text.includes(p))
                     || href.includes('/session/')
                     || href.includes('/workspace/')
